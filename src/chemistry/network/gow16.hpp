@@ -153,8 +153,11 @@ private:
 	Real rad_[n_freq_];
 	Real kph_[n_ph_]; //rates for photo- reactions.
 	static const int iph_C_;
+	static const int iph_CHx_;
 	static const int iph_CO_;
+	static const int iph_OHx_;
 	static const int iph_H2_;
+	static const int iph_Si_;
 	static const int inph_[n_ph_];
 	static const int outph1_[n_ph_];
 	static const Real kph_base_[n_ph_]; //base rate of photo reaction

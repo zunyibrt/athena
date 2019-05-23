@@ -30,7 +30,6 @@ RadIntegrator::RadIntegrator(Radiation *prad, ParameterInput *pin)
 {
   pmy_mb = prad->pmy_block;
   pmy_rad = prad;
-  rad_G0_ = pin->GetReal("problem", "G0");
 #ifdef INCLUDE_CHEMISTRY
   pmy_chemnet = pmy_mb->pspec->pchemnet;
   ncol = pmy_chemnet->n_cols_;

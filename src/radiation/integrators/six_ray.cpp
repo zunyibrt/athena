@@ -673,7 +673,9 @@ void RadIntegrator::UpdateRadiation(int direction) {
   const int iph_CO = ChemNetwork::iph_CO_;
   const int iph_C = ChemNetwork::iph_C_;
   const int iPE = pmy_chemnet->index_gpe_;
+  const int iCR = pmy_chemnet->index_cr_;
   const Real sigmaPE = Thermo::sigmaPE_;
+  const Real NH0_CR = 9.35e20;
   Real NH, AV, NCO, NC, NH2, fs_CO, fs_H2, fs_CI;
   for (int k=pmy_mb->ks; k<=pmy_mb->ke; ++k) {
     for (int j=pmy_mb->js; j<=pmy_mb->je; ++j) {
@@ -684,7 +686,7 @@ void RadIntegrator::UpdateRadiation(int direction) {
         NC = col(direction, k, j, i,  pmy_chemnet->iNC_);
         AV = NH * Zd / 1.87e21;
         //photo-reactions
-        for (int ifreq=0; ifreq < pmy_rad->nfreq-1; ++ifreq) {
+        for (int ifreq=0; ifreq < pmy_rad->nfreq-2; ++ifreq) {
           pmy_rad->ir(k, j, i, ifreq * pmy_rad->nang+iang) = rad_G0_
             * exp( -ChemNetwork::kph_avfac_[ifreq] * AV );
         }
@@ -701,6 +703,16 @@ void RadIntegrator::UpdateRadiation(int direction) {
         //GPE 
         pmy_rad->ir(k, j, i, iPE * pmy_rad->nang+iang) = rad_G0_
           *  exp(-NH * sigmaPE * Zd);
+        //CR
+        if (pmy_chemnet->is_cr_shielding_) {
+          if (NH <= NH0_CR) {
+            pmy_rad->ir(k, j, i, iCR * pmy_rad->nang+iang)
+              = pmy_chemnet->cr_rate0_;
+          } else {
+            pmy_rad->ir(k, j, i, iCR * pmy_rad->nang+iang)
+              = pmy_chemnet->cr_rate0_ * (NH0_CR/NH);
+          }
+        }
       }
     }
   }

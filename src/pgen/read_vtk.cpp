@@ -37,6 +37,7 @@
 #include "../eos/eos.hpp"
 #include "../coordinates/coordinates.hpp"
 #include "../radiation/radiation.hpp"
+#include "../radiation/integrators/rad_integrators.hpp"
 #include "../utils/cgk_utils.hpp"
 #include "../globals.hpp"
 #include "../species/species.hpp"
@@ -374,6 +375,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
 	//intialize radiation field
   if (RADIATION_ENABLED) {
     Real G0 = pin->GetReal("problem", "G0");
+	  Real cr_rate = pin->GetOrAddReal("chemistry", "CR", 2e-16);
     for (int k=ks; k<=ke; ++k) {
       for (int j=js; j<=je; ++j) {
         for (int i=is; i<=ie; ++i) {
@@ -382,9 +384,16 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
               prad->ir(k, j, i, ifreq * prad->nang + iang) = G0;
             }
           }
+          for (int iang=0; iang < prad->nang; ++iang) {
+            //cr rate
+            prad->ir(k, j, i,
+                pspec->pchemnet->index_cr_ * prad->nang + iang) = cr_rate;
+          }
         }
       }
     }
+    //average radiation field for output
+    prad->pradintegrator->CopyToOutput();
 	}
 
   //change primative variables to conservative variables.

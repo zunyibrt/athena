@@ -244,8 +244,11 @@ const Real ChemNetwork::Ti_kCHx_[4] = {7.62, 1.38, 2.66e1, 8.11e3};
 // ----Si, from UMIST12
 // (5) h nu + *Si -> Si+
 const int ChemNetwork::iph_C_ = 0;
+const int ChemNetwork::iph_CHx_ = 1;
 const int ChemNetwork::iph_CO_ = 2;
+const int ChemNetwork::iph_OHx_ = 3;
 const int ChemNetwork::iph_H2_ = 4;
+const int ChemNetwork::iph_Si_ = 5;
 const int ChemNetwork::inph_[n_ph_] = {
               igC_, iCHx_, iCO_,
               iOHx_, iH2_, igSi_};
@@ -287,10 +290,10 @@ ChemNetwork::ChemNetwork(Species *pspec, ParameterInput *pin) {
   //check whether number of frequencies equal to the input file specification
   const int nfreq = pin->GetOrAddInteger("radiation", "n_frequency",1);
   std::stringstream msg; //error message
-  if (nfreq != n_freq_-1) {
+  if (nfreq != n_freq_) {
     msg << "### FATAL ERROR in ChemNetwork constructor" << std::endl
       << "number of frequencies in radiation: " << nfreq 
-      << " not equal to that in chemistry: " << n_freq_-1  << std::endl;
+      << " not equal to that in chemistry: " << n_freq_  << std::endl;
     throw std::runtime_error(msg.str().c_str());
   }
 
@@ -576,32 +579,18 @@ void ChemNetwork::Jacobian(const Real t,
 void ChemNetwork::InitializeNextStep(const int k, const int j, const int i) {
   Real rad_sum, temp, NCO_sum, NH;
   int nang = pmy_mb_->prad->nang;
-  const Real NH0 = 9.35e20;
   //density
   nH_ = pmy_mb_->phydro->w(IDN, k, j, i) / unit_density_in_nH_;
   //average radiation field of all angles
   for (int ifreq=0; ifreq < n_freq_; ++ifreq) {
     rad_sum = 0;
+    //radiation
+    for (int iang=0; iang < nang; ++iang) {
+      rad_sum += pmy_mb_->prad->ir(k, j, i, ifreq * nang + iang);
+    }
     if (ifreq == index_cr_) {
-      //cosmic_ray
-      if (is_cr_shielding_) {
-        for (int iang=0; iang < nang; ++iang) {
-          NH = pmy_mb_->prad->pradintegrator->col(iang, k, j, i, iNHtot_);
-          if (NH <= NH0) {
-            rad_sum += cr_rate0_;
-          } else {
-            rad_sum += cr_rate0_ * (NH0/NH);
-          }
-        }
-        rad_[index_cr_] = rad_sum / float(nang);
-      } else {
-        rad_[index_cr_] = cr_rate0_;
-      }
+      rad_[index_cr_] = rad_sum / float(nang);
     } else {
-      //radiation
-      for (int iang=0; iang < nang; ++iang) {
-        rad_sum += pmy_mb_->prad->ir(k, j, i, ifreq * nang + iang);
-      }
       rad_[ifreq] = rad_sum / float(nang) / unit_radiation_in_draine1987_;
     }
 #ifdef DEBUG
