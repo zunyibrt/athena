@@ -1,84 +1,84 @@
-<comment>
-problem   = Read C. G. Kim's MHD_32pc vtk output, single file.
-reference =
-configure = --prob=read_vtk --chemsitry=gow16 -radiation -pp
+  <comment>
+  problem   = Read C. G. Kim's MHD_32pc vtk output, single file.
+  reference =
+  configure = --prob=read_vtk --chemsitry=gow16 -radiation -pp
 
-<job>
-problem_id = cgk_32pc_chem   # problem ID: basename of output filenames
+  <job>
+  problem_id = cgk_32pc_chem   # problem ID: basename of output filenames
 
-<output1>
-file_type  = vtk       # vtk data dump
-variable   = prim      # variables to be output
-dt         = 3.154e15      # time increment between outputs
+  <output1>
+  file_type  = vtk       # vtk data dump
+  variable   = prim      # variables to be output
+  dt         = 3.154e15      # time increment between outputs
 
-<time>
-cfl_number = 0.3       # The Courant, Friedrichs, & Lewy (CFL) Number
-nlim       = 100        # cycle limit
-tlim       = 3.154e16       # time limit
+  <time>
+  cfl_number = 0.3       # The Courant, Friedrichs, & Lewy (CFL) Number
+  nlim       = 100        # cycle limit
+  tlim       = 3.154e16       # time limit
 
-<mesh>
-nx1        = 32        # Number of zones in X1-direction
-x1min      = -512      # minimum value of X1
-x1max      = 512       # maximum value of X1
-ix1_bc     = user  # ner-X1 boundary flag
-ox1_bc     = user  # outer-X1 boundary flag
+  <mesh>
+  nx1        = 32        # Number of zones in X1-direction
+  x1min      = -512      # minimum value of X1
+  x1max      = 512       # maximum value of X1
+  ix1_bc     = user  # ner-X1 boundary flag
+  ox1_bc     = user  # outer-X1 boundary flag
 
-nx2        = 32        # Number of zones in X2-direction
-x2min      = -512      # minimum value of X2
-x2max      = 512       # maximum value of X2
-ix2_bc     = user  # inner-X2 boundary flag
-ox2_bc     = user  # outer-X2 boundary flag
+  nx2        = 32        # Number of zones in X2-direction
+  x2min      = -512      # minimum value of X2
+  x2max      = 512       # maximum value of X2
+  ix2_bc     = user  # inner-X2 boundary flag
+  ox2_bc     = user  # outer-X2 boundary flag
 
-nx3        = 128         # Number of zones in X3-direction
-x3min      = -2048      # minimum value of X3
-x3max      = 2048       # maximum value of X3
-ix3_bc     = user    # inner-X3 boundary flag
-ox3_bc     = user    # outer-X3 boundary flag
+  nx3        = 128         # Number of zones in X3-direction
+  x3min      = -2048      # minimum value of X3
+  x3max      = 2048       # maximum value of X3
+  ix3_bc     = user    # inner-X3 boundary flag
+  ox3_bc     = user    # outer-X3 boundary flag
 
-<meshblock>
-nx1        =    16
-nx2        =    16
-nx3        =    32
+  <meshblock>
+  nx1        =    16
+  nx2        =    16
+  nx3        =    32
 
-#hydro block is mendatory
-<hydro>
-gamma = 1.666666666666667 # gamma = C_p/C_v
-iso_sound_speed = 1.0     # isothermal sound speed
+  #hydro block is mendatory
+  <hydro>
+  gamma = 1.666666666666667 # gamma = C_p/C_v
+  iso_sound_speed = 1.0     # isothermal sound speed
 
-<problem>
-vtkfile    = /Users/munangong/chemistry_Athena/athena/ChangGoo_data/MHD_32pc/id0/MHD_32pc.0600.vtk #filename of the vtkfile to be read in
-scalers    = density, pressure #scaler fields to be read in, separated by comma
-vectors    = velocity          #vector fields to be read in, separated by comma, assume 3 components
-#assume float format, and lookup_table default
-G0         = 1   #radiation field strength
+  <problem>
+  vtkfile    = /Users/munangong/chemistry_Athena/athena/ChangGoo_data/MHD_32pc/id0/MHD_32pc.0600.vtk #filename of the vtkfile to be read in
+  scalers    = density, pressure #scaler fields to be read in, separated by comma
+  vectors    = velocity          #vector fields to be read in, separated by comma, assume 3 components
+  #assume float format, and lookup_table default
+  G0         = 1   #radiation field strength
 
-<chemistry>
-#chemistry network parameters
-Zdg        = 1. #metallicity, dust and gas metallicity are the same. default = 1.
-CR         = 2e-16  #Cosmic-ray ionization rate per H
-temp_max_rates = 1.0e5 #cap temperature when calculating rates (except for collisional dissociation reactions) 
-#chemistry solver parameters
-reltol     = 1.0e-2  #relative tolerance, default 1.0e-2
-abstol     = 1.0e-15 #absolute tolerance, default 1.0e-12
-abstol_OHx   = 1.0e-25 
-abstol_CHx   = 1.0e-25 
-abstol_CO   = 1.0e-25 
-abstol_H3+   = 1.0e-20 
-abstol_HCO+   = 1.0e-32 
-abstol_H2   = 1.0e-10 
-abstol_E   = 1.381e-18 #for internal energy. Set to 0.01 kb_
-user_jac   = 0       #flag for whether use user provided Jacobian. default false/0
-maxsteps   = 1000000     #maximum number of steps in one integration. default 10000
-h_init      = 1e12    #first step of first zone. Default 0/CVODE algorithm.
-const_T_flag = 0
-temperature = 20
-#code units
-unit_density_in_nH = 1.
-unit_radiation_in_draine1987 = 1
-unit_length_in_cm = 3.086e+18
-isH2RVcooling = 1
-unit_vel_in_cms = 1.0e5
-isNCOeff_LVG = 1
+  <chemistry>
+  #chemistry network parameters
+  Zdg        = 1. #metallicity, dust and gas metallicity are the same. default = 1.
+  CR         = 2e-16  #Cosmic-ray ionization rate per H
+  temp_max_rates = 1.0e5 #cap temperature when calculating rates (except for collisional dissociation reactions) 
+  #chemistry solver parameters
+  reltol     = 1.0e-2  #relative tolerance, default 1.0e-2
+  abstol     = 1.0e-15 #absolute tolerance, default 1.0e-12
+  abstol_OHx   = 1.0e-25 
+  abstol_CHx   = 1.0e-25 
+  abstol_CO   = 1.0e-25 
+  abstol_H3+   = 1.0e-20 
+  abstol_HCO+   = 1.0e-32 
+  abstol_H2   = 1.0e-10 
+  abstol_E   = 1.381e-18 #for internal energy. Set to 0.01 kb_
+  user_jac   = 0       #flag for whether use user provided Jacobian. default false/0
+  maxsteps   = 1000000     #maximum number of steps in one integration. default 10000
+  h_init      = 1e12    #first step of first zone. Default 0/CVODE algorithm.
+  const_T_flag = 0
+  temperature = 20
+  #code units
+  unit_density_in_nH = 1.
+  unit_radiation_in_draine1987 = 1
+  unit_length_in_cm = 3.086e+18
+  isH2RVcooling = 1
+  unit_vel_in_cms = 1.0e5
+  isNCOeff_LVG = 1
 
-<radiation>
-n_frequency  = 7 
+  <radiation>
+  n_frequency  = 8 
