@@ -9,16 +9,15 @@ import scripts.utils.athena as athena          # utilities for running Athena++
 import scripts.utils.comparison as comparison  # more utilities explicitly for testing
 sys.path.insert(0, '../../vis/python')         # insert path to Python read scripts
 import athena_read                             # utilities for reading Athena++ data
+import os
 
 def prepare(**kwargs):
   athena.configure('pp', 
       prob='read_vtk',
       chemistry='gow16', 
       radiation='loc_jeans',
-      #cvode_path='/usr/local/sundials',
-      #cxx="g++"
-      cvode_path='/home/munan/install',
-      cxx="icc"
+      cxx = 'g++',
+      cvode_path=os.environ['CVODE_PATH']
       )
   athena.make()
 
