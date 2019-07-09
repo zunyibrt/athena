@@ -36,6 +36,7 @@
 #include "../species/species.hpp"
 #include "../chemistry/thermo.hpp"
 #include "../radiation/radiation.hpp"
+#include "../radiation/integrators/rad_integrators.hpp"
 #include "../field/field.hpp"
 #include "../eos/eos.hpp"
 #include "../coordinates/coordinates.hpp"
@@ -67,6 +68,7 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
 	//read density and radiation field strength
 	const Real nH = pin->GetReal("problem", "nH");
 	const Real G0 = pin->GetReal("problem", "G0");
+  const Real cr_rate = pin->GetOrAddReal("chemistry", "CR", 2e-16);
 	const Real s_init = pin->GetReal("problem", "s_init");
 
 	//set density
@@ -79,18 +81,25 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin)
 	}
 
 	//intialize radiation field
-	if (RADIATION_ENABLED) {
-      for (int k=ks; k<=ke; ++k) {
-        for (int j=js; j<=je; ++j) {
-          for (int i=is; i<=ie; ++i) {
-						for (int ifreq=0; ifreq < prad->nfreq; ++ifreq) {
-							for (int iang=0; iang < prad->nang; ++iang) {
-								prad->ir(k, j, i, ifreq * prad->nang + iang) = G0;
-							}
-						}
+  if (RADIATION_ENABLED) {
+    for (int k=ks; k<=ke; ++k) {
+      for (int j=js; j<=je; ++j) {
+        for (int i=is; i<=ie; ++i) {
+          for (int ifreq=0; ifreq < prad->nfreq; ++ifreq) {
+            for (int iang=0; iang < prad->nang; ++iang) {
+              prad->ir(k, j, i, ifreq * prad->nang + iang) = G0;
+            }
+          }
+          for (int iang=0; iang < prad->nang; ++iang) {
+            //cr rate
+            prad->ir(k, j, i,
+                pspec->pchemnet->index_cr_ * prad->nang + iang) = cr_rate;
           }
         }
       }
+    }
+    //average radiation field for output
+    prad->pradintegrator->CopyToOutput();
 	}
 
 	//intialize chemical species

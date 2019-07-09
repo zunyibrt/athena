@@ -15,10 +15,9 @@ def prepare(**kwargs):
       prob='uniform_chem',
       chemistry='gow16', 
       radiation='const',
-      #cvode_path='/usr/local/sundials',
-      #cxx = 'g++'
-      cvode_path='/home/munan/install',
-      cxx="icc"
+      cxx = 'g++',
+      #cvode_path=os.environ['CVODE_PATH']
+      cvode_path='/usr/local/sundials'
       )
   athena.make()
 

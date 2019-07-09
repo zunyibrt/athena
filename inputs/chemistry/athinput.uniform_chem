@@ -95,5 +95,5 @@ stldet     = 0       #stability limit detection. Default 0/false.
 
 
 <radiation>
-n_frequency  = 7
+n_frequency  = 8
 
