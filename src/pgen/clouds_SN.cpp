@@ -39,6 +39,9 @@ static Real const unit_kap  = (unit_pres * unit_len * unit_len) /
 static Real const unit_gam  = (unit_pres/unit_time)/(unit_n*unit_n);
 
 // Global variables
+static Real rho_0, pgas_0;
+static Real grav_strength; // g(z) = grav_strength*z [1/time^2]
+
 // User defined boundary conditions 
 // User defined source functions
 void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
@@ -50,18 +53,24 @@ void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
 void gravitySource(MeshBlock *pmb, const Real dt, 
                    const AthenaArray<Real> &prim, 
                    AthenaArray<Real> &cons);
+Real grav_accel(Real z);
+
 // User defined history functions
 
 // Misc
-void assertCondition(bool condition, string msg);
+void assertCondition(bool condition, std::string msg);
 
 //===========================================================================//
 //                             Initializations                               //
 //===========================================================================//
 void Mesh::InitUserMeshData(ParameterInput *pin) {
   // Check for specific configuration
-  assertCondition(NON_BAROTROPIC_EOS,"Use adiabatic eos")
-  assertCondition(block_size.nx2 > 1 && block_size.nx3 > 1,"Run in 3D")
+  assertCondition(NON_BAROTROPIC_EOS,"Use adiabatic eos");
+
+  // Read in constants
+  rho_0         = pin->GetReal("problem", "rho_0");
+  pgas_0        = pin->GetReal("problem", "pgas_0");
+  grav_strength = pin->GetReal("problem", "grav_strength");
 
   // Enroll user-defined physical source terms
   EnrollUserExplicitSourceFunction(SourceFunctions);
@@ -79,44 +88,30 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin) {
 }
 
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
-  // Prepare index bounds (Is this needed?)
-  int il = is - NGHOST; int iu = ie + NGHOST;
-  int jl = js - NGHOST; int ju = je + NGHOST;
-  int kl = ks - NGHOST; int ku = ke + NGHOST;
+  // Check for specific configuration
+  assertCondition(block_size.nx2 > 1 && block_size.nx3 > 1,"Run in 3D");
 
-  Real cs2 = pgas_0/rho_0; // Sound speed
+  Real cs2 = pgas_0/rho_0;
+  Real gamma = peos->GetGamma();
 
-  if (Globals::my_rank == 0) {
-        std::cout << " vc2o2r2 " << vc2o2r2 << "\n";
-        std::cout << " cs2 " << cs2 << "\n";
-        std::cout << " rho_0 " << rho_0 << "\n";
-        std::cout << " rho_floor " << rho_floor << "\n";
-  }
-
-  // Initialize primitive values
-  for (int k = kl; k <= ku; ++k) {
-    for (int j = jl; j <= ju; ++j) {
-      for (int i = il; i <= iu; ++i) {
+  for (int k=ks; k<=ke; k++) {
+    for (int j=js; j<=je; j++) {
+      for (int i=is; i<=ie; i++) {
         Real x = pcoord->x1v(i);
         Real y = pcoord->x2v(j);
         Real z = pcoord->x3v(k);
 
-        Real rho = rho_0 * std::exp(-1.0*vc2o2r2*SQR(z)/cs2);
-        rho = std::max(rho,rho_floor);
+        // Hydrostatic solution for g(z) = const*z
+        Real rho = rho_0 * std::exp(-0.5*grav_strength*SQR(z)/cs2);
 
-        phydro->w(IDN,k,j,i) = rho;
-        phydro->w(IPR,k,j,i) = cs2 * rho; 
-        phydro->w(IVX,k,j,i) = 0.0;
-        phydro->w(IVY,k,j,i) = 0.0;
-        phydro->w(IVZ,k,j,i) = 0.0;
+        phydro->u(IDN,k,j,i) = rho;
+        phydro->u(IM1,k,j,i) = 0.0;
+        phydro->u(IM2,k,j,i) = 0.0;
+        phydro->u(IM3,k,j,i) = 0.0;
+        phydro->u(IEN,k,j,i) = rho*cs2/(gamma-1);
       }
     }
   }
-
-  // Initialize conserved values
-  AthenaArray<Real> b;
-  peos->PrimitiveToConserved(phydro->w, b, phydro->u, pcoord, 
-                             il, iu, jl, ju, kl, ku);
 
   return;
 }
@@ -130,7 +125,6 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 //===========================================================================//
 //                              Source Terms                                 //
 //===========================================================================//
-
 void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
                     const AthenaArray<Real> &prim, 
                     const AthenaArray<Real> &prim_scalar,
@@ -155,8 +149,7 @@ void gravitySource(MeshBlock *pmb, const Real dt,
         Real den = prim(IDN,k,j,i);
         Real vz = prim(IVZ,k,j,i);
         
-        Real grav_acc = 42; // 2*vc2o2r2*z;
-        Real dvz = dt*grav_acc;
+        Real dvz = dt*grav_accel(z);
 
         cons(IM3,k,j,i) -= den*dvz;
         cons(IEN,k,j,i) -= 0.5*den*(2*dvz*vz - SQR(dvz));
@@ -167,6 +160,10 @@ void gravitySource(MeshBlock *pmb, const Real dt,
   return;
 }
 
+Real grav_accel(Real z) {
+  return grav_strength*z;
+}
+
 //===========================================================================//
 //                                Analysis                                   //
 //===========================================================================//
@@ -174,8 +171,8 @@ void gravitySource(MeshBlock *pmb, const Real dt,
 //===========================================================================//
 //                                  Misc                                     //
 //===========================================================================//
-void assertCondition(bool condition, string msg) {
+void assertCondition(bool condition, std::string error_message) {
   std::stringstream msg;
-  msg << "### FATAL ERROR : " << msg << std::endl;
+  msg << "### FATAL ERROR : " << error_message << std::endl;
   if (!condition) { ATHENA_ERROR(msg); }
 }
