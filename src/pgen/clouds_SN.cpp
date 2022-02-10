@@ -21,7 +21,7 @@
 #include "../utils/utils.hpp"              // Utilities
 
 // Code Units (cgs)
-static Real const mh        = 1.6605e-24;   // mass (g)
+static Real const amu       = 1.6605e-24;   // atomic mass unit (g)
 static Real const kb        = 1.380648e-16; // boltzmann constant (erg/K)
 static Real const mu        = 0.6173;       // mean molecular weight (Solar)
                                             // X = 0.7; Z = 0.02
@@ -30,7 +30,8 @@ static Real const unit_len  = 3.086e20;     // 100 pc
 static Real const unit_temp = 1.0e4;        // 10^4 K
 static Real const unit_n    = 1.0;          // cm^-3
 
-static Real const unit_rho  = unit_n * mh * mu;
+// TODO: Output these in useful units
+static Real const unit_rho  = unit_n * amu * mu;
 static Real const unit_pres = kb * unit_n * unit_temp;
 static Real const unit_vel  = sqrt(unit_pres / unit_rho);
 static Real const unit_time = unit_len / unit_vel;
@@ -39,20 +40,20 @@ static Real const unit_kap  = (unit_pres * unit_len * unit_len) /
 static Real const unit_gam  = (unit_pres/unit_time)/(unit_n*unit_n);
 
 // Global variables
-static Real rho_0, pgas_0;
-static Real grav_strength; // g(z) = grav_strength*z [1/time^2]
+static Real rho0, pgas0;
+static Real vcir, R0;
 
 // User defined boundary conditions 
-void HydrostaticInnerX3(MeshBlock *pmb, Coordinates *pco,
-                        AthenaArray<Real> &a,
-                        FaceField &b, Real time, Real dt,
-                        int il, int iu, int jl, int ju, 
-                        int kl, int ku, int ngh);
-void HydrostaticOuterX3(MeshBlock *pmb, Coordinates *pco,
-                        AthenaArray<Real> &a,
-                        FaceField &b, Real time, Real dt,
-                        int il, int iu, int jl, int ju, 
-                        int kl, int ku, int ngh);
+void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
+                     AthenaArray<Real> &a,
+                     FaceField &b, Real time, Real dt,
+                     int il, int iu, int jl, int ju, 
+                     int kl, int ku, int ngh);
+void NoInflowOuterX3(MeshBlock *pmb, Coordinates *pco,
+                    AthenaArray<Real> &a,
+                    FaceField &b, Real time, Real dt,
+                    int il, int iu, int jl, int ju, 
+                    int kl, int ku, int ngh);
 
 // User defined source functions
 void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
@@ -83,16 +84,17 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
                   "Use user-defined outer boundary condition along x3");
 
   // Read in constants
-  rho_0         = pin->GetReal("problem", "rho_0");
-  pgas_0        = pin->GetReal("problem", "pgas_0");
-  grav_strength = pin->GetReal("problem", "grav_strength");
+  rho0  = pin->GetReal("problem", "rho0");
+  pgas0 = pin->GetReal("problem", "pgas0");
+  vcir  = pin->GetReal("problem", "vcir");
+  R0    = pin->GetReal("problem", "R0");
 
   // Enroll user-defined physical source terms
   EnrollUserExplicitSourceFunction(SourceFunctions);
 
   // Enroll user-defined boundary conditions
-  EnrollUserBoundaryFunction(BoundaryFace::inner_x3, HydrostaticInnerX3);
-  EnrollUserBoundaryFunction(BoundaryFace::outer_x3, HydrostaticOuterX3);
+  EnrollUserBoundaryFunction(BoundaryFace::inner_x3, NoInflowInnerX3);
+  EnrollUserBoundaryFunction(BoundaryFace::outer_x3, NoInflowOuterX3);
 
   // Enroll user defined history outputs
 
@@ -109,7 +111,8 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
   // Check for specific configuration
   assertCondition(block_size.nx2 > 1 && block_size.nx3 > 1,"Run in 3D");
 
-  Real cs2 = pgas_0/rho_0; // Isothermal sound speed
+  Real cs2 = pgas0/rho0; // Isothermal sound speed
+  Real H = std::sqrt(cs2)/(vcir/R0); // Scale height = cs/omega
   Real gamma = peos->GetGamma();
 
   for (int k=ks; k<=ke; k++) {
@@ -119,8 +122,10 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         Real y = pcoord->x2v(j);
         Real z = pcoord->x3v(k);
 
-        // Hydrostatic solution for g(z) = const*z
-        Real rho = rho_0 * std::exp(-0.5*grav_strength*SQR(z)/cs2);
+        // Hydrostatic Solution
+        Real norm = rho0/std::exp(SQR(R0)/SQR(H));
+        Real rho = norm*std::exp(SQR(R0/H)*
+                                 std::pow(SQR(R0)/(SQR(R0)+SQR(z)),0.5));
 
         phydro->u(IDN,k,j,i) = rho;
         phydro->u(IM1,k,j,i) = 0.0;
@@ -137,54 +142,8 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 //===========================================================================//
 //                           Boundary Conditions                             //
 //===========================================================================//
-// // Upper z boundary
-// // Hold the Gaussian profile with zero velocities - Test initial setup
-// void HydrostaticOuterX3(MeshBlock *pmb, Coordinates *pco,
-//                          AthenaArray<Real> &prim,
-//                          FaceField &b, Real time, Real dt,
-//                          int il, int iu, int jl, int ju, int kl, int ku, int ngh) {
-//   for (int k=1; k<=ngh; k++) {
-//     for (int j=jl; j<=ju; j++) {
-//       for (int i=il; i<=iu; i++) {
-//         Real z = pco->x3v(ku+k);
-//         Real cs2 = pgas_0/rho_0;
-
-//         prim(IDN,ku+k,j,i) = rho_0 * std::exp(-0.5*grav_strength*SQR(z)/cs2);
-//         prim(IPR,ku+k,j,i) = pgas_0 * std::exp(-0.5*grav_strength*SQR(z)/cs2);
-
-//         prim(IVX,ku+k,j,i) = 0.0; 
-//         prim(IVY,ku+k,j,i) = 0.0;
-//         prim(IVZ,ku+k,j,i) = 0.0; 
-//       }
-//     }
-//   }
-//   return;
-// }
-
-// void HydrostaticInnerX3(MeshBlock *pmb, Coordinates *pco,
-//                          AthenaArray<Real> &prim, FaceField &b,
-//                          Real time, Real dt,
-//                          int il, int iu, int jl, int ju, int kl, int ku, int ngh) {
-//   for (int k=1; k<=ngh; k++) {
-//     for (int j=jl; j<=ju; j++) {
-//       for (int i=il; i<=iu; i++) {
-//         Real z = pco->x3v(kl-k);
-//         Real cs2 = pgas_0/rho_0;
-
-//         prim(IDN,kl-k,j,i) = rho_0 * std::exp(-0.5*grav_strength*SQR(z)/cs2);
-//         prim(IPR,kl-k,j,i) = pgas_0 * std::exp(-0.5*grav_strength*SQR(z)/cs2);
-
-//         prim(IVX,kl-k,j,i) = 0.0; 
-//         prim(IVY,kl-k,j,i) = 0.0;
-//         prim(IVZ,kl-k,j,i) = 0.0; 
-//       }
-//     }
-//   }
-//   return;
-// }
-
-// NoInflow
-void HydrostaticOuterX3(MeshBlock *pmb, Coordinates *pco,
+// Zero gradient no inflow upper boundary condition
+void NoInflowOuterX3(MeshBlock *pmb, Coordinates *pco,
                          AthenaArray<Real> &prim,
                          FaceField &b, Real time, Real dt,
                          int il, int iu, int jl, int ju, int kl, int ku, int ngh) {
@@ -203,7 +162,8 @@ void HydrostaticOuterX3(MeshBlock *pmb, Coordinates *pco,
   return;
 }
 
-void HydrostaticInnerX3(MeshBlock *pmb, Coordinates *pco,
+// Zero gradient no inflow lower boundary condition
+void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
                          AthenaArray<Real> &prim,
                          FaceField &b, Real time, Real dt,
                          int il, int iu, int jl, int ju, int kl, int ku, int ngh) {
@@ -261,7 +221,8 @@ void gravitySource(MeshBlock *pmb, const Real dt,
 }
 
 Real grav_accel(Real z) {
-  return grav_strength*z;
+  // Equivalent to g = z * GM/(R^2 + z^2)^1.5
+  return SQR(vcir/R0)*std::pow(SQR(R0)/(SQR(R0)+SQR(z)),1.5)*z;
 }
 
 //===========================================================================//
