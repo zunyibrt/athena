@@ -53,6 +53,9 @@ TurbulenceDriver::TurbulenceDriver(Mesh *pm, ParameterInput *pin) :
     f_shear(pin->GetOrAddReal("turbulence", "f_shear", -1)), // ratio of shear component
     expo(pin->GetOrAddReal("turbulence", "expo", 2)), // power-law exponent
     dedt(pin->GetReal("turbulence", "dedt")), // turbulence amplitude
+    // scale height for turbulent driving:
+    z_turb(pin->GetOrAddReal("turbulence", "z_turb", -1)),    
+    v_rms(pin->GetOrAddReal("turbulence", "v_rms", -1)), // target RMS velocity driving
     // TODO(changgoo): this assumes 3D and should not work with 1D, 2D. Add check.
     vel{ {nmb, pm->my_blocks(0)->ncells3,
                pm->my_blocks(0)->ncells2, pm->my_blocks(0)->ncells1},
@@ -346,12 +349,23 @@ void TurbulenceDriver::Perturb(Real dt) {
   Real m[4] = {0};
   AthenaArray<Real> &dv1 = vel[0], &dv2 = vel[1], &dv3 = vel[2];
 
+  Real z;
+
   for (int nb=0; nb<pm->nblocal; ++nb) {
     MeshBlock *pmb = pm->my_blocks(nb);
     for (int k=kl; k<=ku; k++) {
       for (int j=jl; j<=ju; j++) {
         for (int i=il; i<=iu; i++) {
+          z = pmb->pcoord->x3v(k);
           den = pmb->phydro->u(IDN,k,j,i);
+
+          // Apply a Gaussian weight if a turbulent scale height is defined
+          if (z_turb > 0) {
+            dv1(nb,k,j,i) *= std::exp(-SQR(z/z_turb));
+            dv2(nb,k,j,i) *= std::exp(-SQR(z/z_turb));
+            dv3(nb,k,j,i) *= std::exp(-SQR(z/z_turb));
+          }
+
           m[0] += den;
           m[1] += den*dv1(nb,k,j,i);
           m[2] += den*dv2(nb,k,j,i);
@@ -387,6 +401,7 @@ void TurbulenceDriver::Perturb(Real dt) {
   // Calculate unscaled energy of perturbations
   m[0] = 0.0;
   m[1] = 0.0;
+  m[2] = 0.0;
   for (int nb=0; nb<pm->nblocal; ++nb) {
     MeshBlock *pmb = pm->my_blocks(nb);
     for (int k=kl; k<=ku; k++) {
@@ -399,8 +414,9 @@ void TurbulenceDriver::Perturb(Real dt) {
           M1 = pmb->phydro->u(IM1,k,j,i);
           M2 = pmb->phydro->u(IM2,k,j,i);
           M3 = pmb->phydro->u(IM3,k,j,i);
-          m[0] += den*(SQR(v1) + SQR(v2) + SQR(v3));
-          m[1] += M1*v1 + M2*v2 + M3*v3;
+          m[0] += den;
+          m[1] += den*(SQR(v1) + SQR(v2) + SQR(v3));
+          m[2] += M1*v1 + M2*v2 + M3*v3;
         }
       }
     }
@@ -418,21 +434,28 @@ void TurbulenceDriver::Perturb(Real dt) {
 #endif // MPI_PARALLEL
 
   // Rescale to give the correct energy injection rate
-  if (pm->turb_flag > 1) {
-    // driven turbulence
-    de = dedt*dt;
+  if (v_rms > 0) {
+    aa = sqrt(m[1]/m[0]);
+    s = v_rms/aa;
   } else {
-    // decaying turbulence (all in one shot)
-    de = dedt;
+    if (pm->turb_flag > 1) {
+      // driven turbulence
+      de = dedt*dt;
+    } else {
+      // decaying turbulence (all in one shot)
+      de = dedt;
+    }
+
+    aa = 0.5*m[1];
+    aa = std::max(aa,static_cast<Real>(1.0e-20));
+    b = m[2];
+    c = -de/dvol;
+    if (b >= 0.0) {
+      s = (-2.0*c)/(b + std::sqrt(b*b - 4.0*aa*c));
+    } else {
+      s = (-b + std::sqrt(b*b - 4.0*aa*c))/(2.0*aa);
+    }
   }
-  aa = 0.5*m[0];
-  aa = std::max(aa,static_cast<Real>(1.0e-20));
-  b = m[1];
-  c = -de/dvol;
-  if (b >= 0.0)
-    s = (-2.0*c)/(b + std::sqrt(b*b - 4.0*aa*c));
-  else
-    s = (-b + std::sqrt(b*b - 4.0*aa*c))/(2.0*aa);
 
   if (std::isnan(s)) std::cout << "[perturb]: s is NaN!" << std::endl;
 
