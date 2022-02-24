@@ -7,7 +7,9 @@ module load intel-oneapi-compilers/2022.0.1 intel-oneapi-mkl/2022.0.1 intel-onea
 export MPICH_CXX=icpc
 
 # Run configuration script and save to logfile
-./configure.py --prob=clouds_SN -fft -mpi --cxx icpc -hdf5 -h5double > configure.log 
+#./configure.py --prob=turb_cooling -fft -mpi --cxx icpc -hdf5 -h5double > configure.log 
+
+./configure.py --prob=turb_cooling -fft > configure.log
 
 # Print configuration to stdout
 cat configure.log
