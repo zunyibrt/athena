@@ -8,45 +8,45 @@
 
 class Cooling {
 public:
-  Cooling(const std::string in);
-  ~Cooling();
+    Cooling(const std::string in);
+    ~Cooling();
 
-  Real townsend_cooling(const Real temp, const Real rho, const Real dt);
-  Real single_point_cooling_time(const Real T, const Real rho);
+    Real townsend_cooling(const Real temp, const Real rho, const Real dt);
+    Real single_point_cooling_time(const Real T, const Real rho);
 
-  // Load table from file
-  void read_points(const std::string in, 
-                   std::vector<Real> &temperatures,
-                   std::vector<Real> &cooling, 
-                   std::vector<Real> &heating);
+    // Load table from file
+    void read_points(const std::string in, 
+                    std::vector<Real> &temperatures,
+                    std::vector<Real> &cooling, 
+                    std::vector<Real> &heating);
 
-  // Accessors
-  Real Get_tceil() const {return Tceil_;}
-  Real Get_tfloor() const {return Tfloor_;}
+    // Accessors
+    Real Get_tceil() const {return Tceil_;}
+    Real Get_tfloor() const {return Tfloor_;}
 
 private:
-  // Loaded Arrays
-  AthenaArray<Real> temperature_table;
-  AthenaArray<Real> cooling_table;
-  AthenaArray<Real> heating_table;
-  int nbins_;
+    // Loaded Arrays
+    AthenaArray<Real> temperature_table;
+    AthenaArray<Real> cooling_table;
+    AthenaArray<Real> heating_table;
+    int nbins_;
 
-  // Userful physical quantities 
-  Real Tceil_;
-  Real Tfloor_;
-  Real const_factor_;
+    // Userful physical quantities 
+    Real Tceil_;
+    Real Tfloor_;
+    Real const_factor_;
 
-  // Scratch Arrays
-  AthenaArray<Real> net_cooling;
-  AthenaArray<Real> temps;
-  AthenaArray<Real> Ys; 
+    // Scratch Arrays
+    AthenaArray<Real> net_cooling;
+    AthenaArray<Real> temps;
+    AthenaArray<Real> Ys; 
 
-  // Helper
-  int get_temp_index(const Real T);
-  Real inst_cooling(const Real T, const Real rho);
-  Real get_zero_point(const int i, const Real rho);
-  Real compute_constant_factor();
-  bool isClose(const Real a, const Real b, const Real tol = 1e-20);
+    // Helper
+    int get_temp_index(const Real T);
+    Real inst_cooling(const Real T, const Real rho);
+    Real get_zero_point(const int i, const Real rho);
+    Real compute_constant_factor();
+    bool isClose(const Real a, const Real b, const Real tol = 1e-20);
 };
 
 // Constructor
@@ -63,7 +63,6 @@ Cooling::Cooling(const std::string in) {
         temperatures.push_back(T);
         cooling.push_back(c);
         heating.push_back(h);
-
     }
     infile.close();
 
@@ -93,7 +92,7 @@ Cooling::Cooling(const std::string in) {
     temps.NewAthenaArray(nbins_);
     Ys.NewAthenaArray(nbins_);
 
-  return;
+    return;
 }
 
 // Destructor
@@ -135,7 +134,7 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
     Real T_new = 0.0;
 
     if (net_cool_T > 0) { // Cooling
-        // We save time by using the next bin as the point of reference for the TEF
+        // We save time by using the next bin as the reference for the TEF
         // Hence we need to check for the edge case where it is a heating bin
         if (net_cooling(T_idx+1) < 0) {
             // If so we figure out what the equilibruim temperature is
@@ -391,15 +390,15 @@ Real Cooling::get_zero_point(const int i, const Real rho) {
 
 // Compute (1.0e-23)*(g-1.0)*mu/(kb*mu_e*mu_h*mh);
 Real Cooling::compute_constant_factor() {
-  Real mh  = 1.6605e-24;       // Atomic mass unit (g)
-  Real kb  = 1.380648e-16;     // Boltzmann constant (erg/K)
-  Real g  = 5.0/3.0;           // Adiabatic index
-  Real X = 0.7; Real Z = 0.02; // Fully ionized, solar abundances
-  Real mu   = 1.0/(2.0*X + 0.75*(1.0-X-Z) + Z/2.0);
-  Real mu_e = 2.0/(1.0+X);
-  Real mu_h = 1.0/X;
+    Real mh  = 1.6605e-24;       // Atomic mass unit (g)
+    Real kb  = 1.380648e-16;     // Boltzmann constant (erg/K)
+    Real g  = 5.0/3.0;           // Adiabatic index
+    Real X = 0.7; Real Z = 0.02; // Fully ionized, solar abundances
+    Real mu   = 1.0/(2.0*X + 0.75*(1.0-X-Z) + Z/2.0);
+    Real mu_e = 2.0/(1.0+X);
+    Real mu_h = 1.0/X;
 
-  return (1.0e-23)*(g-1.0)*mu/(kb*mu_e*mu_h*mh);
+    return (1.0e-23)*(g-1.0)*mu/(kb*mu_e*mu_h*mh);
 }
 
 bool Cooling::isClose(const Real a, const Real b, const Real tol) {
