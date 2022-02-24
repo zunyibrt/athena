@@ -3,15 +3,22 @@
 
 #include "../athena.hpp"
 #include "../athena_arrays.hpp"
+#include <fstream>
+#include <sstream>
 
 class Cooling {
 public:
-  Cooling(const AthenaArray<Real> &user_temperature_table,
-          const AthenaArray<Real> &user_cooling_table, 
-          const AthenaArray<Real> &user_heating_table);
+  Cooling(const std::string in);
   ~Cooling();
 
   Real townsend_cooling(const Real temp, const Real rho, const Real dt);
+  Real single_point_cooling_time(const Real T, const Real rho);
+
+  // Load table from file
+  void read_points(const std::string in, 
+                   std::vector<Real> &temperatures,
+                   std::vector<Real> &cooling, 
+                   std::vector<Real> &heating);
 
   // Accessors
   Real Get_tceil() const {return Tceil_;}
@@ -43,31 +50,48 @@ private:
 };
 
 // Constructor
-Cooling::Cooling(const AthenaArray<Real> &user_temperature_table,
-                 const AthenaArray<Real> &user_cooling_table, 
-                 const AthenaArray<Real> &user_heating_table) {
-  temperature_table = user_temperature_table;
-  cooling_table = user_cooling_table;
-  heating_table = user_heating_table;
+Cooling::Cooling(const std::string in) {
+    // Read in table
+    std::ifstream infile;
+    infile.open(in.c_str());
+    std::string line;
+    std::vector<Real> temperatures, cooling, heating;
+    while(getline(infile,line) && line[0] != '#'){
+        std::stringstream ss(line);
+        Real T,c,h;
+        ss >> T >> c >> h;
+        temperatures.push_back(T);
+        cooling.push_back(c);
+        heating.push_back(h);
 
-  nbins_ = user_temperature_table.GetSize();
-  int sc = user_cooling_table.GetSize();
-  int sh = user_heating_table.GetSize();
+    }
+    infile.close();
 
-  // Assert that they have the same lengths
-  if (nbins_ != sc || nbins_ != sh) { 
-    std::stringstream msg;
-    msg << "### ERROR : Heating/Cooling Tables are different sizes!" << std::endl;
-    ATHENA_ERROR(msg); 
-  }
+    nbins_ = temperatures.size();
+    // Assert that they have the same lengths
+    if (nbins_ != cooling.size() || nbins_ != heating.size()) { 
+        std::stringstream msg;
+        msg << "### ERROR : Heating/Cooling Tables are different sizes!" << std::endl;
+        ATHENA_ERROR(msg); 
+    }
 
-  Tceil_ = user_temperature_table(-1);
-  Tfloor_ = user_temperature_table(0);
-  const_factor_ = compute_constant_factor();
+    AthenaArray<Real> temperature_table(nbins_);
+    AthenaArray<Real> cooling_table(nbins_);
+    AthenaArray<Real> heating_table(nbins_);
 
-  net_cooling.NewAthenaArray(nbins_);
-  temps.NewAthenaArray(nbins_);
-  Ys.NewAthenaArray(nbins_);
+    for (int i=0; i<=nbins_; ++i) {
+        temperature_table(i) = temperatures.at(i);
+        cooling_table(i) = cooling.at(i);
+        heating_table(i) = heating.at(i);
+    }
+
+    Tceil_ = temperature_table(-1);
+    Tfloor_ = temperature_table(0);
+    const_factor_ = compute_constant_factor();
+
+    net_cooling.NewAthenaArray(nbins_);
+    temps.NewAthenaArray(nbins_);
+    Ys.NewAthenaArray(nbins_);
 
   return;
 }
@@ -380,6 +404,10 @@ Real Cooling::compute_constant_factor() {
 
 bool Cooling::isClose(const Real a, const Real b, const Real tol) {
     return std::fabs(a-b) <= tol;
+}
+
+Real Cooling::single_point_cooling_time(const Real T, const Real rho) {
+    return T/(const_factor_*rho*inst_cooling(T,rho));
 }
 
 #endif // COOLING_HPP_
