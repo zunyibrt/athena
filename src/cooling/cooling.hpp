@@ -78,10 +78,13 @@ Cooling::Cooling(const std::string in) {
     AthenaArray<Real> cooling_table(nbins_);
     AthenaArray<Real> heating_table(nbins_);
 
+    Real X = 0.7;
+    Real mu_e = 2.0/(1.0+X);
+
     for (int i=0; i<=nbins_; ++i) {
         temperature_table(i) = temperatures.at(i);
-        cooling_table(i) = cooling.at(i);
-        heating_table(i) = heating.at(i);
+        cooling_table(i)     = cooling.at(i)/1.0e-23;
+        heating_table(i)     = mu_e*heating.at(i)/1.0e-23;
     }
 
     Tceil_ = temperature_table(-1);
