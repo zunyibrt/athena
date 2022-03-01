@@ -8,6 +8,7 @@
 
 class Cooling {
 public:
+    Cooling();
     Cooling(const std::string in);
     ~Cooling();
 
@@ -50,6 +51,24 @@ private:
 };
 
 // Constructor
+Cooling::Cooling() {
+    nbins_ = 1;
+
+    AthenaArray<Real> temperature_table(nbins_);
+    AthenaArray<Real> cooling_table(nbins_);
+    AthenaArray<Real> heating_table(nbins_);
+
+    Tceil_ = 0.;
+    Tfloor_ = 0.;
+    const_factor_ = 0.;
+
+    net_cooling.NewAthenaArray(nbins_);
+    temps.NewAthenaArray(nbins_);
+    Ys.NewAthenaArray(nbins_);
+
+    return;
+}
+
 Cooling::Cooling(const std::string in) {
     // Read in table
     std::ifstream infile;

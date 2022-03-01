@@ -32,11 +32,45 @@
 #include <omp.h>
 #endif
 
+// User defined source functions
+void cooling(MeshBlock *pmb, const Real time, const Real dt,
+             const AthenaArray<Real> &prim,
+             const AthenaArray<Real> &prim_scalar,
+             const AthenaArray<Real> &bcc,
+             AthenaArray<Real> &cons,
+             AthenaArray<Real> &cons_scalar);
+
+// Cooling
+static Cooling cooler;
+
+// Code Units (cgs)
+static Real const amu       = 1.6605e-24;   // atomic mass unit (g)
+static Real const kb        = 1.380648e-16; // boltzmann constant (erg/K)
+static Real const mu        = 0.6173;       // mean molecular weight (Solar)
+                                            // X = 0.7; Z = 0.02
+
+static Real const unit_len  = 3.086e20;     // 100 pc
+static Real const unit_temp = 1.0e4;        // 10^4 K
+static Real const unit_n    = 1.0;          // cm^-3
+
+static Real const unit_rho  = unit_n * amu * mu;
+static Real const unit_pres = kb * unit_n * unit_temp;
+static Real const unit_vel  = sqrt(unit_pres / unit_rho);
+static Real const unit_time = unit_len / unit_vel;
+static Real const unit_kap  = (unit_pres * unit_len * unit_len) /
+                              (unit_time * unit_temp);
+static Real const unit_gam  = (unit_pres/unit_time)/(unit_n*unit_n);
+
 //========================================================================================
 //! \fn void Mesh::InitUserMeshData(ParameterInput *pin)
 //  \brief
 //========================================================================================
 void Mesh::InitUserMeshData(ParameterInput *pin) {
+  cooler = Cooling("/mnt/home/btan1/Work/athena/src/cooling/cooling_tables/kigs.txt");
+
+  // Enroll user-defined physical source terms
+  EnrollUserExplicitSourceFunction(cooling);
+
   if (SELF_GRAVITY_ENABLED) {
     Real four_pi_G = pin->GetReal("problem","four_pi_G");
     Real eps = pin->GetOrAddReal("problem","grav_eps", 0.0);
@@ -92,4 +126,55 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 //========================================================================================
 
 void Mesh::UserWorkAfterLoop(ParameterInput *pin) {
+}
+
+// User Defined Cooling Function
+void cooling(MeshBlock *pmb, const Real time, const Real dt,
+             const AthenaArray<Real> &prim,
+             const AthenaArray<Real> &prim_scalar,
+             const AthenaArray<Real> &bcc,
+             AthenaArray<Real> &cons,
+             AthenaArray<Real> &cons_scalar) {
+  Real g = pmb->peos->GetGamma();
+
+  for (int k=pmb->ks; k<=pmb->ke; ++k) {
+    for (int j=pmb->js; j<=pmb->je; ++j) {
+      for (int i=pmb->is; i<=pmb->ie; ++i) {
+        // Need to take density and temperature at time step n from cons, not
+        // prim because we do not need intermediate step to calculate the
+        // cooling function
+        Real rho = cons(IDN,k,j,i);
+        Real eint = cons(IEN,k,j,i)
+                    - 0.5 *(cons(IM1,k,j,i)*cons(IM1,k,j,i)
+                          + cons(IM2,k,j,i)*cons(IM2,k,j,i)
+                          + cons(IM3,k,j,i)*cons(IM3,k,j,i))/rho;        
+
+        // T = P/rho
+        Real temp = eint * (g-1.0)/rho;
+        
+        Real temp_new = temp;
+
+        if (temp < 0.5) {
+          // Calculate new temperature using the Townsend Algorithm
+          // The inputs should be given in cgs units
+          Real temp_cgs = temp * unit_temp;
+          Real rho_cgs  = rho  * unit_rho;
+          Real dt_cgs   = dt   * unit_time;
+          temp_new = cooler.townsend_cooling(temp_cgs,rho_cgs,dt_cgs)/unit_temp;
+        }
+
+        // Enforce temperature floor
+        temp_new = std::max(temp_new, cooler.Get_tfloor()/unit_temp);
+
+        // Update energy based on change in temperature
+        cons(IEN,k,j,i) += (temp_new - temp) * (rho/(g-1.0));
+
+        // Store the change in energy/time in a user defined output variable
+        pmb->user_out_var(0,k,j,i) = (temp_new - temp) * (rho/(g-1.0)) / dt;
+ 
+      }
+    }
+  }
+
+  return;
 }
