@@ -40,6 +40,9 @@ void cooling(MeshBlock *pmb, const Real time, const Real dt,
              AthenaArray<Real> &cons,
              AthenaArray<Real> &cons_scalar);
 
+// User defined time step
+static Real cooling_timestep(MeshBlock *pmb);
+
 // Cooling
 static Cooling cooler;
 
@@ -66,17 +69,13 @@ static Real const unit_gam  = (unit_pres/unit_time)/(unit_n*unit_n);
 //  \brief
 //========================================================================================
 void Mesh::InitUserMeshData(ParameterInput *pin) {
-  cooler = Cooling("/mnt/home/btan1/Work/athena/src/cooling/cooling_tables/kigs.txt");
+  cooler = Cooling(pin->GetString("cooling","cooling_table"));
 
   // Enroll user-defined physical source terms
   EnrollUserExplicitSourceFunction(cooling);
 
-  if (SELF_GRAVITY_ENABLED) {
-    Real four_pi_G = pin->GetReal("problem","four_pi_G");
-    Real eps = pin->GetOrAddReal("problem","grav_eps", 0.0);
-    SetFourPiG(four_pi_G);
-    SetGravityThreshold(eps);
-  }
+  // Enroll timestep so that dt <= min t_cool
+  EnrollUserTimeStepFunction(cooling_timestep);
 
   // turb_flag is initialzed in the Mesh constructor to 0 by default;
   // turb_flag = 1 for decaying turbulence
@@ -102,18 +101,20 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 //========================================================================================
 
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
+  Real rho = pin->GetReal("problem","rho");
+  Real temp = pin->GetReal("problem","temp");
+
   for (int k=ks; k<=ke; k++) {
     for (int j=js; j<=je; j++) {
       for (int i=is; i<=ie; i++) {
-        phydro->u(IDN,k,j,i) = 1.0;
+
+        phydro->u(IDN,k,j,i) = rho;
 
         phydro->u(IM1,k,j,i) = 0.0;
         phydro->u(IM2,k,j,i) = 0.0;
-        phydro->u(IM3,k,j,i) = 0.0;
+        phydro->u(IM3,k,j,i) = 0.0; 
 
-        if (NON_BAROTROPIC_EOS) {
-          phydro->u(IEN,k,j,i) = 1.0;
-        }
+        phydro->u(IEN,k,j,i) = rho*temp/((5.0/3.0)-1.0);
       }
     }
   }
@@ -154,27 +155,43 @@ void cooling(MeshBlock *pmb, const Real time, const Real dt,
         
         Real temp_new = temp;
 
-        if (temp < 0.5) {
-          // Calculate new temperature using the Townsend Algorithm
-          // The inputs should be given in cgs units
-          Real temp_cgs = temp * unit_temp;
-          Real rho_cgs  = rho  * unit_rho;
-          Real dt_cgs   = dt   * unit_time;
-          temp_new = cooler.townsend_cooling(temp_cgs,rho_cgs,dt_cgs)/unit_temp;
-        }
+        // Calculate new temperature using the Townsend Algorithm
+        // The inputs should be given in cgs units
+        Real temp_cgs = temp * unit_temp;
+        Real rho_cgs  = rho  * unit_rho;
+        Real dt_cgs   = dt   * unit_time;
 
-        // Enforce temperature floor
-        temp_new = std::max(temp_new, cooler.Get_tfloor()/unit_temp);
+        // if (i==2 && j==2 && k==2) std:: cout << "start : " << temp_new*unit_temp << "  " << rho_cgs << "  " << dt << std::endl; 
+        temp_new = cooler.townsend_cooling(temp_cgs,rho_cgs,dt_cgs)/unit_temp;
+        // if (i==2 && j==2 && k==2) std:: cout << "end : " << temp_new*unit_temp << std::endl; 
 
         // Update energy based on change in temperature
         cons(IEN,k,j,i) += (temp_new - temp) * (rho/(g-1.0));
 
         // Store the change in energy/time in a user defined output variable
-        pmb->user_out_var(0,k,j,i) = (temp_new - temp) * (rho/(g-1.0)) / dt;
+        // pmb->user_out_var(0,k,j,i) = (temp_new - temp) * (rho/(g-1.0)) / dt;
  
       }
     }
   }
 
   return;
+}
+
+Real cooling_timestep(MeshBlock *pmb)
+{
+  Real min_dt=1.0e10;
+  for (int k=pmb->ks; k<=pmb->ke; ++k) {
+    for (int j=pmb->js; j<=pmb->je; ++j) {
+      for (int i=pmb->is; i<=pmb->ie; ++i) {
+        Real T = pmb->phydro->w(IPR,k,j,i)/pmb->phydro->w(IDN,k,j,i);
+        Real rho = pmb->phydro->w(IDN,k,j,i);
+        Real tcool = cooler.single_point_cooling_time(T*unit_temp, rho*unit_rho)/unit_time;
+ 
+        min_dt = std::min(min_dt, 0.25*tcool);
+      }
+    }
+  }
+
+  return min_dt;
 }

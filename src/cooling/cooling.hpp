@@ -2,7 +2,6 @@
 #define COOLING_HPP_
 
 #include "../athena.hpp"
-#include "../athena_arrays.hpp"
 #include <fstream>
 #include <sstream>
 
@@ -17,19 +16,19 @@ public:
 
     // Load table from file
     void read_points(const std::string in, 
-                    std::vector<Real> &temperatures,
-                    std::vector<Real> &cooling, 
-                    std::vector<Real> &heating);
+                     std::vector<Real> &temperatures,
+                     std::vector<Real> &cooling, 
+                     std::vector<Real> &heating);
 
     // Accessors
-    Real Get_tceil() const {return Tceil_;}
+    Real Get_tceil()  const {return Tceil_;}
     Real Get_tfloor() const {return Tfloor_;}
 
 private:
     // Loaded Arrays
-    AthenaArray<Real> temperature_table;
-    AthenaArray<Real> cooling_table;
-    AthenaArray<Real> heating_table;
+    std::vector<Real> temperature_table;
+    std::vector<Real> cooling_table;
+    std::vector<Real> heating_table;
     int nbins_;
 
     // Userful physical quantities 
@@ -38,9 +37,9 @@ private:
     Real const_factor_;
 
     // Scratch Arrays
-    AthenaArray<Real> net_cooling;
-    AthenaArray<Real> temps;
-    AthenaArray<Real> Ys; 
+    std::vector<Real> net_cooling;
+    std::vector<Real> temps;
+    std::vector<Real> Ys; 
 
     // Helper
     int get_temp_index(const Real T);
@@ -54,17 +53,17 @@ private:
 Cooling::Cooling() {
     nbins_ = 1;
 
-    AthenaArray<Real> temperature_table(nbins_);
-    AthenaArray<Real> cooling_table(nbins_);
-    AthenaArray<Real> heating_table(nbins_);
+    temperature_table = {0.};
+    cooling_table     = {0.};
+    heating_table     = {0.};
 
-    Tceil_ = 0.;
-    Tfloor_ = 0.;
+    Tceil_        = 0.;
+    Tfloor_       = 0.;
     const_factor_ = 0.;
 
-    net_cooling.NewAthenaArray(nbins_);
-    temps.NewAthenaArray(nbins_);
-    Ys.NewAthenaArray(nbins_);
+    net_cooling = {0.};
+    temps       = {0.};
+    Ys          = {0.};
 
     return;
 }
@@ -74,45 +73,38 @@ Cooling::Cooling(const std::string in) {
     std::ifstream infile;
     infile.open(in.c_str());
     std::string line;
-    std::vector<Real> temperatures, cooling, heating;
-    while(getline(infile,line) && line[0] != '#'){
-        std::stringstream ss(line);
-        Real T,c,h;
-        ss >> T >> c >> h;
-        temperatures.push_back(T);
-        cooling.push_back(c);
-        heating.push_back(h);
+
+    Real X    = 0.7;
+    Real mu_e = 2.0/(1.0+X);
+    Real mh   = 1.6605e-24;
+
+    while (std::getline(infile,line)) {
+        if (line[0] != '#') {
+            std::stringstream ss(line);
+            Real T,c,h;
+            ss >> T >> c >> h;
+            temperature_table.push_back(T);
+            cooling_table.push_back(std::max(c/1.0e-23,1.0e-30));
+            heating_table.push_back(std::max(mu_e*mh*h/1.0e-23,1.0e-30));
+        }
     }
     infile.close();
 
-    nbins_ = temperatures.size();
+    nbins_ = temperature_table.size();
     // Assert that they have the same lengths
-    if (nbins_ != cooling.size() || nbins_ != heating.size()) { 
+    if (nbins_ != cooling_table.size() || nbins_ != heating_table.size()) { 
         std::stringstream msg;
         msg << "### ERROR : Heating/Cooling Tables are different sizes!" << std::endl;
         ATHENA_ERROR(msg); 
     }
 
-    AthenaArray<Real> temperature_table(nbins_);
-    AthenaArray<Real> cooling_table(nbins_);
-    AthenaArray<Real> heating_table(nbins_);
-
-    Real X = 0.7;
-    Real mu_e = 2.0/(1.0+X);
-
-    for (int i=0; i<=nbins_; ++i) {
-        temperature_table(i) = temperatures.at(i);
-        cooling_table(i)     = cooling.at(i)/1.0e-23;
-        heating_table(i)     = mu_e*heating.at(i)/1.0e-23;
-    }
-
-    Tceil_ = temperature_table(-1);
-    Tfloor_ = temperature_table(0);
+    Tceil_        = temperature_table.at(nbins_-1);
+    Tfloor_       = temperature_table.at(0);
     const_factor_ = compute_constant_factor();
 
-    net_cooling.NewAthenaArray(nbins_);
-    temps.NewAthenaArray(nbins_);
-    Ys.NewAthenaArray(nbins_);
+    net_cooling.resize(nbins_,0);
+    temps.resize(nbins_,0);
+    Ys.resize(nbins_,0);
 
     return;
 }
@@ -124,19 +116,19 @@ Cooling::~Cooling() {
 
 // Exact Integration Scheme for Radiative Cooling from Townsend (2009)
 // Expanded to include heating
+// Requires: Input temperature, density, and timestep in cgs units
 // Returns: Temperature(K) at the next timestep after cooling/heating
-// Requires: - Input temperature, density, and timestep in cgs units
 Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
     // Ensure temperature is within bounds
     if (T <= Tfloor_) return Tfloor_;
-    if (T >= Tceil_) return Tceil_;
+    if (T >= Tceil_)  return Tceil_;
 
     // Make a copy of temperatures that can be edited
     temps = temperature_table;
 
     // Calculate net cooling for a given density
-    for (int i=0; i<=nbins_; ++i) {
-        net_cooling(i) = cooling_table(i)-heating_table(i)/rho;
+    for (int i=0; i<nbins_; ++i) {
+        net_cooling.at(i) = cooling_table.at(i)-heating_table.at(i)/rho;
     }
 
     // Get index of the temperature bin
@@ -150,7 +142,7 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
 
     // Flags for piece-wise linear bins - only at start or end
     int start_linear_idx = -1;
-    int end_linear_idx = -1;
+    int end_linear_idx   = -1;
 
     // Our aim is to calculate the new temperature
     Real T_new = 0.0;
@@ -158,25 +150,25 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
     if (net_cool_T > 0) { // Cooling
         // We save time by using the next bin as the reference for the TEF
         // Hence we need to check for the edge case where it is a heating bin
-        if (net_cooling(T_idx+1) < 0) {
+        if (net_cooling.at(T_idx+1) < 0) {
             // If so we figure out what the equilibruim temperature is
             // Note everything after this index should not be used anymore
             // We then hijack the next bin to mark this temperature
             // And set the cooling there to zero
             // The piecewise power law assumption is still here, so
             //   cooling in this bin will be automatically suppressed
-            temps(T_idx+1)       = get_zero_point(T_idx,rho);
-            net_cooling(T_idx+1) = 1e-20;
-            start_linear_idx     = T_idx;
+            temps.at(T_idx+1)       = get_zero_point(T_idx,rho);
+            net_cooling.at(T_idx+1) = 1e-10;
+            start_linear_idx        = T_idx;
         }
 
         // Set reference values
-        Real T_ref = temps(T_idx+1);
-        Real C_ref = net_cooling(T_idx+1);
+        Real T_ref = temps.at(T_idx+1);
+        Real C_ref = net_cooling.at(T_idx+1);
         
         // Compute Y from idx = temp_bin+1 downwards
         // Calculate Y_k recursively (Eq. A6) from idx = temp_bin+1 downwards    
-        Ys(T_idx+1) = 0.0;
+        Ys.at(T_idx+1) = 0.0;
 
         int i = T_idx;
         bool cooling_region_end = false;
@@ -185,21 +177,21 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
         Real step, slope, sm1, oms;
 
         while (i >= 0 && !cooling_region_end) {
-            if (net_cooling(i) < 0) { // if this bin has net heating
-                temps(i) = get_zero_point(i,rho);          
-                net_cooling(i) = 1e-20;
+            if (net_cooling.at(i) < 0) { // if this bin has net heating
+                temps.at(i) = get_zero_point(i,rho);          
+                net_cooling.at(i) = 1e-10;
                 end_linear_idx = i;
                 cooling_region_end = true;
             }
                 
-            T_i = temps(i);
-            C_i = net_cooling(i);
+            T_i = temps.at(i);
+            C_i = net_cooling.at(i);
 
-            T_ip1 = temps(i+1);
-            C_ip1 = net_cooling(i+1);
+            T_ip1 = temps.at(i+1);
+            C_ip1 = net_cooling.at(i+1);
             
             if (i == start_linear_idx || i == end_linear_idx) {
-                slope = (T_ip1-T_i)/(C_ip1-C_i);
+                slope = (T_ip1-T_i)/(C_ip1-C_i); // for our use case, c_ip1 != c_i
                 step = (C_ref/T_ref)*slope*std::log(C_i/C_ip1);
             } else { 
                 slope = std::log(C_ip1/C_i)/std::log(T_ip1/T_i);
@@ -211,21 +203,21 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
                 }
             }
 
-            Ys(i) = Ys(i+1) - step;
+            Ys.at(i) = Ys.at(i+1) - step;
             i -= 1;
         }
 
-        Real T_min = temps(i+1);
-        Real Y_lim = Ys(i+1);
+        Real T_min = temps.at(i+1);
+        Real Y_lim = Ys.at(i+1);
 
         // Compute current TEF Y
         Real Y, Y_i;
         
-        Y_i = Ys(T_idx);
-        T_i = temps(T_idx);
-        C_i = net_cooling(T_idx);
-        T_ip1 = temps(T_idx+1);
-        C_ip1 = net_cooling(T_idx+1);
+        Y_i = Ys.at(T_idx);
+        T_i = temps.at(T_idx);
+        C_i = net_cooling.at(T_idx);
+        T_ip1 = temps.at(T_idx+1);
+        C_ip1 = net_cooling.at(T_idx+1);
 
 
         if (T_idx == start_linear_idx || T_idx == end_linear_idx) {
@@ -250,13 +242,13 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
         // TEF is a strictly decreasing function of T and new_tef > tef
         // Check if the new TEF falls into a lower bin
         // If so, update slopes and coefficients
-        while ((T_idx > 0) && (Y_new > Ys(T_idx))) { T_idx -= 1; }
+        while ((T_idx > 0) && (Y_new > Ys.at(T_idx))) { T_idx -= 1; }
         
-        T_i   = temps(T_idx);
-        Y_i   = Ys(T_idx);
-        C_i   = net_cooling(T_idx);
-        T_ip1 = temps(T_idx+1);
-        C_ip1 = net_cooling(T_idx+1);
+        T_i   = temps.at(T_idx);
+        Y_i   = Ys.at(T_idx);
+        C_i   = net_cooling.at(T_idx);
+        T_ip1 = temps.at(T_idx+1);
+        C_ip1 = net_cooling.at(T_idx+1);
         
         // Compute the Inverse Temporal Evolution Function Y^{-1}(Y) (Eq. A7)
         if (T_idx == start_linear_idx || T_idx == end_linear_idx) {
@@ -272,18 +264,18 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
             }
         }
     } else { // Heating, net_cool_T < 0
-        if (net_cooling(T_idx+1) > 0) { // If the cuurent bin is cooling and not heating
-            temps(T_idx)       = get_zero_point(T_idx,rho);
-            net_cooling(T_idx) = -1e-20;
-            start_linear_idx   = T_idx;
+        if (net_cooling.at(T_idx) > 0) { // If the cuurent bin is cooling and not heating
+            temps.at(T_idx)       = get_zero_point(T_idx,rho);
+            net_cooling.at(T_idx) = -1e-10;
+            start_linear_idx      = T_idx;
         }
         
         // Set reference values
-        Real T_ref = temps(T_idx);
-        Real C_ref = net_cooling(T_idx);
+        Real T_ref = temps.at(T_idx);
+        Real C_ref = net_cooling.at(T_idx);
 
         // Compute Y from idx = temp_bin upwards
-        Ys(T_idx) = 0.;
+        Ys.at(T_idx) = 0.;
 
         int i = T_idx+1;
         bool heating_region_end = false;
@@ -292,18 +284,18 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
         Real step, slope, sm1, oms;
 
         while (i < nbins_ && !heating_region_end) {
-            if (net_cooling(i) > 0) { // if this bin has net cooling
-                temps(i) = get_zero_point(i-1,rho);          
-                net_cooling(i) = -1e-20;
+            if (net_cooling.at(i) > 0) { // if this bin has net cooling
+                temps.at(i) = get_zero_point(i-1,rho);          
+                net_cooling.at(i) = -1e-10;
                 end_linear_idx = i-1;
                 heating_region_end = true;
             }
                 
-            T_i = temps(i-1);
-            C_i = net_cooling(i-1);
+            T_i = temps.at(i-1);
+            C_i = net_cooling.at(i-1);
 
-            T_ip1 = temps(i);
-            C_ip1 = net_cooling(i);
+            T_ip1 = temps.at(i);
+            C_ip1 = net_cooling.at(i);
             
             if (i == start_linear_idx || i == end_linear_idx) {
                 slope = (T_ip1-T_i)/(C_ip1-C_i);
@@ -318,22 +310,21 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
                 }
             }
 
-            Ys(i) = Ys(i-1) + step;
+            Ys.at(i) = Ys.at(i-1) + step;
             i += 1;
         }
 
-        Real T_max = temps(i-1);
-        Real Y_lim = Ys(i-1);
+        Real T_max = temps.at(i-1);
+        Real Y_lim = Ys.at(i-1);
 
         // Compute current TEF Y
         Real Y, Y_i;
         
-        Y_i = Ys(T_idx);
-        T_i = temps(T_idx);
-        C_i = net_cooling(T_idx);
-        T_ip1 = temps(T_idx+1);
-        C_ip1 = net_cooling(T_idx+1);
-
+        Y_i = Ys.at(T_idx);
+        T_i = temps.at(T_idx);
+        C_i = net_cooling.at(T_idx);
+        T_ip1 = temps.at(T_idx+1);
+        C_ip1 = net_cooling.at(T_idx+1);
 
         if (T_idx == start_linear_idx || T_idx == end_linear_idx) {
             slope = (T_ip1-T_i)/(C_ip1-C_i);
@@ -357,13 +348,13 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
         // TEF is a strictly decreasing function of T and new_tef < tef
         // Check if the new TEF falls into a higher bin
         // If so, update slopes and coefficients
-        while ((T_idx < nbins_) && (Y_new < Ys(T_idx+1))) { T_idx += 1; }
+        while ((T_idx < nbins_) && (Y_new < Ys.at(T_idx+1))) { T_idx += 1; }
         
-        T_i   = temps(T_idx);
-        Y_i   = Ys(T_idx);
-        C_i   = net_cooling(T_idx);
-        T_ip1 = temps(T_idx+1);
-        C_ip1 = net_cooling(T_idx+1);
+        T_i   = temps.at(T_idx);
+        Y_i   = Ys.at(T_idx);
+        C_i   = net_cooling.at(T_idx);
+        T_ip1 = temps.at(T_idx+1);
+        C_ip1 = net_cooling.at(T_idx+1);
         
         // Compute the Inverse Temporal Evolution Function Y^{-1}(Y) (Eq. A7)
         if (T_idx == start_linear_idx || T_idx == end_linear_idx) {
@@ -385,7 +376,7 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
 
 int Cooling::get_temp_index(const Real T) {
     int T_idx = 0; // Get index of our temperature bin
-    while ((T_idx < nbins_-2) && (temperature_table(T_idx+1) < T)) { 
+    while ((T_idx < nbins_-2) && (temperature_table.at(T_idx+1) < T)) { 
         T_idx += 1; 
     }
     return T_idx;
@@ -394,20 +385,21 @@ int Cooling::get_temp_index(const Real T) {
 Real Cooling::inst_cooling(const Real T, const Real rho) {
     int T_idx = get_temp_index(T);
 
-    Real cooling_k = (std::log(cooling_table(T_idx+1)/cooling_table(T_idx))
-                     /std::log(temperature_table(T_idx+1)/temperature_table(T_idx)));
-    Real heating_k = (std::log(heating_table(T_idx+1)/heating_table(T_idx))
-                     /std::log(temperature_table(T_idx+1)/temperature_table(T_idx)));
-    Real cool_T = cooling_table(T_idx)*std::pow((T/temperature_table(T_idx)),cooling_k);
-    Real heat_T = heating_table(T_idx)*std::pow((T/temperature_table(T_idx)),heating_k);
+    Real cooling_k = (std::log(cooling_table.at(T_idx+1)/cooling_table.at(T_idx))
+                     /std::log(temperature_table.at(T_idx+1)/temperature_table.at(T_idx)));
+    Real heating_k = (std::log(heating_table.at(T_idx+1)/heating_table.at(T_idx))
+                     /std::log(temperature_table.at(T_idx+1)/temperature_table.at(T_idx)));
+    Real cool_T = cooling_table.at(T_idx)*std::pow((T/temperature_table.at(T_idx)),cooling_k);
+    Real heat_T = heating_table.at(T_idx)*std::pow((T/temperature_table.at(T_idx)),heating_k);
+    
     return cool_T - heat_T/rho;
 }
 
 Real Cooling::get_zero_point(const int i, const Real rho) {
-    Real log_T_ratio = std::log(temperature_table(i+1)/temperature_table(i));
-    Real sc = std::log(cooling_table(i+1)/cooling_table(i))/log_T_ratio;
-    Real sh = std::log(heating_table(i+1)/heating_table(i))/log_T_ratio;
-    return temperature_table(i)*std::pow(heating_table(i)/(rho*cooling_table(i)),1/(sc-sh));
+    Real log_T_ratio = std::log(temperature_table.at(i+1)/temperature_table.at(i));
+    Real sc = std::log(cooling_table.at(i+1)/cooling_table.at(i))/log_T_ratio;
+    Real sh = std::log(heating_table.at(i+1)/heating_table.at(i))/log_T_ratio;
+    return temperature_table.at(i)*std::pow(heating_table.at(i)/(rho*cooling_table.at(i)),1/(sc-sh));
 }
 
 // Compute (1.0e-23)*(g-1.0)*mu/(kb*mu_e*mu_h*mh);
@@ -428,7 +420,7 @@ bool Cooling::isClose(const Real a, const Real b, const Real tol) {
 }
 
 Real Cooling::single_point_cooling_time(const Real T, const Real rho) {
-    return T/(const_factor_*rho*inst_cooling(T,rho));
+    return std::abs(T/(const_factor_*rho*inst_cooling(T,rho)));
 }
 
 #endif // COOLING_HPP_
