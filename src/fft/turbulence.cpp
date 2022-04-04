@@ -424,7 +424,7 @@ void TurbulenceDriver::Perturb(Real dt) {
 
 #ifdef MPI_PARALLEL
   // Sum the perturbations over all processors
-  mpierr = MPI_Allreduce(MPI_IN_PLACE, m, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  mpierr = MPI_Allreduce(MPI_IN_PLACE, m, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   if (mpierr) {
     std::stringstream msg;
     msg << "[normalize]: MPI_Allreduce error = "
@@ -474,7 +474,7 @@ void TurbulenceDriver::Perturb(Real dt) {
           M3 = pmb->phydro->u(IM3,k,j,i);
 
           if (NON_BAROTROPIC_EOS) {
-            pmb->phydro->u(IEN,k,j,i) += s*(M1*v1 + M2*v2+M3*v3)
+            pmb->phydro->u(IEN,k,j,i) += s*(M1*v1 + M2*v2 + M3*v3)
                                          + 0.5*s*s*den*(SQR(v1) + SQR(v2) + SQR(v3));
           }
           pmb->phydro->u(IM1,k,j,i) += s*den*v1;

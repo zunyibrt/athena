@@ -1,52 +1,111 @@
-std::vector<Real> LinearSpacedArray(Real a, Real b, std::size_t N) {
-    Real h = (b - a) / static_cast<double>(N-1);
-    std::vector<Real> xs(N);
-    std::vector<Real>::iterator x;
-    Real val;
-    for (x = xs.begin(), val = a; x != xs.end(); ++x, val += h) {
-        *x = val;
+class SNInj {
+public:
+    SNInj();
+    ~SNInj();
+    
+    std::vector<Real> get_t_list(Real M, Real t_end);
+
+private:
+    Real a1, a2, a3, a4;
+    Real t1, t2, t3;
+    Real s1, s2, s3;
+    
+    Real n_sn(Real t);
+    Real n_sn_ia(Real t);
+    Real get_sn_t(Real n, Real n1, Real n2, Real M);
+};
+
+// Constructor
+SNInj::SNInj() {
+    // From FIRE-3 Paper
+    a1 = 0.39;
+    a2 = 0.51;
+    a3 = 0.18;
+    a4 = 0.0083;
+
+    t1 = 3.7; // Myr
+    t2 = 7.0;
+    t3 = 44.0;
+
+    s1 = std::log(a2/a1)/log(t2/t1);
+    s2 = std::log(a3/a2)/std::log(t3/t2);
+    s3 = -1.1;
+    
+    return;
+}
+
+// Destructor
+SNInj::~SNInj() {
+    return;
+}
+
+
+Real SNInj::n_sn(Real t) { 
+    if (t < t1) {
+        return 0.0;
+    } else if (t <= t2) {
+        return ((a1*t1)/(s1+1))*(std::pow(t/t1,s1+1)-1)/1000.0;
+    } else if (t <= t3) {
+        return n_sn(t2) + ((a4*t3)/(s3+1))*(std::pow(t/t3,s3+1)-1)/1000.0;
     }
-    return xs;
+    
+    return n_sn(t3) + ((a4*t3)/(s3+1))*(std::pow(t/t3,s3+1)-1)/1000;
+}
+        
+Real SNInj::n_sn_ia(Real t) {
+    if (t > t3) {
+        return ((a4*t3)/(s3+1))*(std::pow(t/t3,s3+1)-1)/1000.0;
+    }
+    
+    return 0.0;
+}
+        
+Real SNInj::get_sn_t(Real n, Real n1, Real n2, Real M) {
+    if (n < n1) {
+        return t1*std::pow(((1000*n*(s1+1))/(M*a1*t1))+1,1/(s1+1));
+    } else if (n < n2) {
+        return t2*std::pow(((1000*(n-n1)*(s2+1))/(M*a2*t2))+1,1/(s2+1));
+    } else {
+        return t3*std::pow(((1000*(n-n2)*(s3+1))/(M*a4*t3))+1,1/(s3+1));
+    }
+    
+    return 0.0;
 }
     
-// Get a list of supernova times 
-std::vector<Real> get_sn_times(const Real m_sol, const Real t_end) {
-    // Core collaspe
-    std::vector<Real>times = LinearSpacedArray(0.1, 1.1, 100);
+std::vector<Real> SNInj::get_t_list(Real M, Real t_end) {
+    Real n1 = n_sn(t2)*M;
+    Real n2 = n_sn(t3)*M;
+    Real n_end = n_sn(t_end)*M;
+   
+    std::vector<Real> times;
+    for (int i=1; i < n_end; i++) {
+        times.push_back(0.1+(get_sn_t(i, n1, n2, M)/8.43170511078221));
+    }
+    
     times.push_back(1e20);
+    
     return times;
 }
 
-// def get_t_list(M,t_end):
-//     // From FIRE-3 Paper
-//     Real a1 = 0.39;
-//     Real a2 = 0.51;
-//     Real a3 = 0.18;
-//     Real a4 = 0.0083;
 
-//     Real t1 = 3.7; // Myr
-//     Real t2 = 7.0;
-//     Real t3 = 44.0;
-
-//     Real s1 = std::log(a2/a1)/std::log(t2/t1);
-//     Real s2 = std::log(a3/a2)/std::log(t3/t2);
-//     Real s3 = -1.1;
-
-//     Real n1 = n_sn(t2)*M;
-//     Real n2 = n_sn(t3)*M;
-//     Real n_end = n_sn(t_end)*M;
-   
-//     def get_sn_t(n):
-//         if (n < n1):
-//             return t1*np.power(((1000*n*(s1+1))/(M*a1*t1))+1,1/(s1+1))
-//         elif (n < n2):
-//             return t2*np.power(((1000*(n-n1)*(s2+1))/(M*a2*t2))+1,1/(s2+1))
-//         else:
-//             return t3*np.power(((1000*(n-n2)*(s3+1))/(M*a4*t3))+1,1/(s3+1))
+// std::vector<Real> LinearSpacedArray(Real a, Real b, std::size_t N) {
+//     Real h = (b - a) / static_cast<double>(N-1);
+//     std::vector<Real> xs(N);
+//     std::vector<Real>::iterator x;
+//     Real val;
+//     for (x = xs.begin(), val = a; x != xs.end(); ++x, val += h) {
+//         *x = val;
+//     }
+//     return xs;
+// }
     
-//     last_sn = np.floor(n_end)
-    
-//     return np.array([get_sn_t(n) for n in np.arange(1,last_sn+1)])
+// // Get a list of supernova times 
+// std::vector<Real> get_sn_times(const Real m_sol, const Real t_end) {
+//     // Core collaspe
+//     std::vector<Real>times = LinearSpacedArray(0.1, 1.1, 1000);
+//     times.push_back(1e20);
+//     return times;
+// }
 
 
 // Real get_sn_ep(const Real r, const Real nh) {

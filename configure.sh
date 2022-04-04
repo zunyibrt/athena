@@ -9,7 +9,8 @@ module load intel-oneapi-compilers intel-oneapi-mkl openmpi/4.0.7 fftw/3.3.10-mp
 
 # Run configuration script and save to logfile
 #./configure.py --prob=02_test_turb_cooling -fft -mpi --cxx icpc -hdf5 -h5double > configure.log 
-./configure.py --prob=03_test_turb_sn -fft -mpi -hdf5 -h5double > configure.log
+#./configure.py --prob=04_test_turb_sn_cooling -fft -mpi -hdf5 -h5double > configure.log
+./configure.py --prob=05_test_edot -fft -mpi -hdf5 -h5double > configure.log
 
 # Print configuration to stdout
 cat configure.log
