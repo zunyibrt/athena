@@ -58,14 +58,16 @@ static Real r_inj,e_sn,m_ej;
 // User defined boundary conditions 
 void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
                      AthenaArray<Real> &a,
-                     FaceField &b, Real time, Real dt,
+                     FaceField &b, AthenaArray<Real> &r,
+                     Real time, Real dt,
                      int il, int iu, int jl, int ju, 
                      int kl, int ku, int ngh);
 void NoInflowOuterX3(MeshBlock *pmb, Coordinates *pco,
-                    AthenaArray<Real> &a,
-                    FaceField &b, Real time, Real dt,
-                    int il, int iu, int jl, int ju, 
-                    int kl, int ku, int ngh);
+                     AthenaArray<Real> &a,
+                     FaceField &b, AthenaArray<Real> &r,
+                     Real time, Real dt,
+                     int il, int iu, int jl, int ju, 
+                     int kl, int ku, int ngh);
 
 // User defined source functions
 void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
@@ -145,7 +147,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   EnrollUserBoundaryFunction(BoundaryFace::outer_x3, NoInflowOuterX3);
 
   // Enroll timestep so that dt <= min t_cool
-  //EnrollUserTimeStepFunction(CoolingTimestep);
+  EnrollUserTimeStepFunction(CoolingTimestep);
 
   // Enroll user-defined history outputs
   AllocateUserHistoryOutput(3);
@@ -240,10 +242,11 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
 //===========================================================================//
 // Zero gradient no inflow upper boundary condition
 void NoInflowOuterX3(MeshBlock *pmb, Coordinates *pco,
-                         AthenaArray<Real> &prim,
-                         FaceField &b, Real time, Real dt,
-                         int il, int iu, int jl, int ju, 
-                         int kl, int ku, int ngh) {
+                     AthenaArray<Real> &prim,
+                     FaceField &b, AthenaArray<Real> &r,
+                     Real time, Real dt,
+                     int il, int iu, int jl, int ju, 
+                     int kl, int ku, int ngh) {
   for (int k=1; k<=ngh; k++) {
     for (int j=jl; j<=ju; j++) {
       for (int i=il; i<=iu; i++) {
@@ -262,10 +265,11 @@ void NoInflowOuterX3(MeshBlock *pmb, Coordinates *pco,
 
 // Zero gradient no inflow lower boundary condition
 void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
-                         AthenaArray<Real> &prim,
-                         FaceField &b, Real time, Real dt,
-                         int il, int iu, int jl, int ju, 
-                         int kl, int ku, int ngh) {
+                     AthenaArray<Real> &prim,
+                     FaceField &b, AthenaArray<Real> &r, 
+                     Real time, Real dt,
+                     int il, int iu, int jl, int ju, 
+                     int kl, int ku, int ngh) {
   for (int k=1; k<=ngh; k++) {
     for (int j=jl; j<=ju; j++) {
       for (int i=il; i<=iu; i++) {
@@ -483,5 +487,5 @@ Real CoolingTimestep(MeshBlock *pmb) {
     }
   }
 
-  return 0.25*min_dt; // Extra factor of 1/4
+  return 0.5*min_dt; // Extra factor of 1/2
 }
