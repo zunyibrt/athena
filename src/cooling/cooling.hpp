@@ -84,8 +84,8 @@ Cooling::Cooling(const std::string in) {
             Real T,c,h;
             ss >> T >> c >> h;
             temperature_table.push_back(T);
-            cooling_table.push_back(std::max(c/1.0e-23,1.0e-30));
-            heating_table.push_back(std::max(mu_e*mh*h/1.0e-23,1.0e-30));
+            cooling_table.push_back(std::fmax(c/1.0e-23,1.0e-30));
+            heating_table.push_back(std::fmax(mu_e*mh*h/1.0e-23,1.0e-30));
         }
     }
     infile.close();
@@ -370,6 +370,15 @@ Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
             }
         }
     }
+
+    if (std::isnan(T_new)) {
+          std::cout << " Warning : Cooling result is NaN. Cell will not be cooled. " << std::endl;
+          T_new = T;
+    }
+    
+    // Check floor and ceilings are respected (error catching)
+    T_new = std::fmin(T_new, Tceil_);
+    T_new = std::fmax(T_new, Tfloor_);
 
     return T_new;
 }
