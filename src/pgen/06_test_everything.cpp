@@ -148,7 +148,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   EnrollUserBoundaryFunction(BoundaryFace::outer_x3, NoInflowOuterX3);
 
   // Enroll timestep so that dt <= min t_cool
-  // EnrollUserTimeStepFunction(CoolingTimestep);
+  EnrollUserTimeStepFunction(CoolingTimestep);
 
   // Enroll user-defined history outputs
   AllocateUserHistoryOutput(3);
@@ -418,6 +418,37 @@ void CoolingSource(MeshBlock *pmb, const Real dt,
         Real dt_cgs   = dt   * unit_time;
 
         temp_new = cooler.townsend_cooling(temp_cgs,rho_cgs,dt_cgs)/unit_temp;
+
+        // Average Neighbours if near the floor
+        if (temp_new < 1.1*cooler.Get_tfloor()) {
+          Real sum_temp = 0.0;
+          Real n_nb = 0.0;
+          for (int nk=std::max(k-1,pmb->ks); nk<=std::min(k+1,pmb->ke); ++k) {
+            for (int nj=std::max(j-1,pmb->js); nj<=std::min(j+1,pmb->je); ++j) {
+              for (int ni=std::max(i-1,pmb->is); ni<=std::min(i+1,pmb->ie); ++i) {
+                if ((nk != k) || (nj != j) || (ni != i)) {
+                  auto nrho = cons(IDN,nk,nj,ni);
+                  auto neint = cons(IEN,nk,nj,ni)
+                              - 0.5 *(cons(IM1,nk,nj,ni)*cons(IM1,nk,nj,ni)
+                                    + cons(IM2,nk,nj,ni)*cons(IM2,nk,nj,ni)
+                                    + cons(IM3,nk,nj,ni)*cons(IM3,nk,nj,ni))/nrho;
+                  if (MAGNETIC_FIELDS_ENABLED) {
+                    neint -= 0.5 *(bcc(IB1,nk,nj,ni) * bcc(IB1,nk,nj,ni)
+                                 + bcc(IB2,nk,nj,ni) * bcc(IB2,nk,nj,ni)
+                                 + bcc(IB3,nk,nj,ni) * bcc(IB3,nk,nj,ni));
+                  }
+
+                  // T = P/rho
+                  auto ntemp = neint * (g-1.0)/nrho;
+
+                  n_nb += 1;
+                  sum_temp += ntemp;
+                }
+          }}}
+          temp_new = sum_temp/n_nb;
+
+          std::cout << " Temperature Floor Hit... Averaging Neigbours... T = " << temp_new << std::endl;
+        }
 
         // Update energy based on change in temperature
         cons(IEN,k,j,i) += (temp_new - temp) * (rho/(g-1.0));
