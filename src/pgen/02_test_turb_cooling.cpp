@@ -28,10 +28,6 @@
 #include "../utils/utils.hpp"
 #include "../cooling/cooling.hpp"
 
-#ifdef OPENMP_PARALLEL
-#include <omp.h>
-#endif
-
 // User defined source functions
 void cooling(MeshBlock *pmb, const Real time, const Real dt,
              const AthenaArray<Real> &prim,

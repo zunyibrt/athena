@@ -82,7 +82,8 @@ void GravitySource(MeshBlock *pmb, const Real dt,
 Real GravAccel(Real z);
 void CoolingSource(MeshBlock *pmb, const Real dt, 
                    const AthenaArray<Real> &prim, 
-                   AthenaArray<Real> &cons);
+                   AthenaArray<Real> &cons,
+                   const AthenaArray<Real> &bcc);
 void SNSource(MeshBlock *pmb, const Real dt, 
               const AthenaArray<Real> &prim, 
               AthenaArray<Real> &cons);
@@ -147,7 +148,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   EnrollUserBoundaryFunction(BoundaryFace::outer_x3, NoInflowOuterX3);
 
   // Enroll timestep so that dt <= min t_cool
-  // EnrollUserTimeStepFuncti on(CoolingTimestep);
+  // EnrollUserTimeStepFunction(CoolingTimestep);
 
   // Enroll user-defined history outputs
   AllocateUserHistoryOutput(3);
@@ -229,10 +230,10 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         Real rho = rho0*std::exp(SQR(R0/H)*
                                  (std::pow(SQR(R0)/(SQR(R0)+SQR(z)),0.5)-1));
 
+        // Grid scale random field for initial TI
         rho *= (1 + amp*(ran2(&iseed)-0.5));
         rho = std::fmax(rho,1e-8);
 
-        // Grid scale random field for initial TI
         phydro->u(IDN,k,j,i) = rho;
         phydro->u(IM1,k,j,i) = rho*amp*(ran2(&iseed)-0.5);
         phydro->u(IM2,k,j,i) = rho*amp*(ran2(&iseed)-0.5);
@@ -247,6 +248,35 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
        
     }
   }
+
+
+  // initialize uniform interface B
+  if (MAGNETIC_FIELDS_ENABLED) {
+    Real beta = pin->GetReal("problem","beta");
+    for (int k=ks; k<=ke; k++) {
+    for (int j=js; j<=je; j++) {
+    for (int i=is; i<=ie+1; i++) {
+      pfield->b.x1f(k,j,i) = std::sqrt(2*phydro->u(IDN,k,j,i)*cs2/beta);
+    }}}
+    for (int k=ks; k<=ke; k++) {
+    for (int j=js; j<=je+1; j++) {
+    for (int i=is; i<=ie; i++) {
+      pfield->b.x2f(k,j,i) = 0.0;
+    }}}
+    for (int k=ks; k<=ke+1; k++) {
+    for (int j=js; j<=je; j++) {
+    for (int i=is; i<=ie; i++) {
+      pfield->b.x3f(k,j,i) = 0.0;
+    }}}
+    for (int k=ks; k<=ke; k++) {
+    for (int j=js; j<=je; j++) {
+    for (int i=is; i<=ie; i++) {
+      phydro->u(IEN,k,j,i) += 0.5*(SQR(pfield->b.x1f(k,j,i)) +
+                                   SQR(pfield->b.x2f(k,j,i)) +
+                                   SQR(pfield->b.x3f(k,j,i)));
+    }}}
+  }
+
 
   return;
 }
@@ -313,7 +343,7 @@ void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
   GravitySource(pmb,dt,prim,cons);
 
   // Radiative cooling
-  CoolingSource(pmb,dt,prim,cons);
+  CoolingSource(pmb,dt,prim,cons,bcc);
 
   // SNe injection
   if (time > sn_times.at(next_sn_idx)) { // Step through list of SN times
@@ -355,7 +385,8 @@ Real GravAccel(Real z) {
 // Cooling source term
 void CoolingSource(MeshBlock *pmb, const Real dt, 
                    const AthenaArray<Real> &prim, 
-                   AthenaArray<Real> &cons) {
+                   AthenaArray<Real> &cons,
+                   const AthenaArray<Real> &bcc) {
   const Real g = pmb->peos->GetGamma();
 
   for (int k=pmb->ks; k<=pmb->ke; k++) {
@@ -367,7 +398,13 @@ void CoolingSource(MeshBlock *pmb, const Real dt,
         Real eint = cons(IEN,k,j,i)
                     - 0.5 *(cons(IM1,k,j,i)*cons(IM1,k,j,i)
                           + cons(IM2,k,j,i)*cons(IM2,k,j,i)
-                          + cons(IM3,k,j,i)*cons(IM3,k,j,i))/rho;        
+                          + cons(IM3,k,j,i)*cons(IM3,k,j,i))/rho; 
+
+        if (MAGNETIC_FIELDS_ENABLED) {
+          eint -= 0.5 *(bcc(IB1,k,j,i) * bcc(IB1,k,j,i)
+                      + bcc(IB2,k,j,i) * bcc(IB2,k,j,i)
+                      + bcc(IB3,k,j,i) * bcc(IB3,k,j,i));
+        }       
 
         // T = P/rho
         Real temp = eint * (g-1.0)/rho;

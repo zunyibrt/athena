@@ -103,6 +103,8 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   e_sn  = pin->GetOrAddReal("SN","E_sn",std::pow(10,51)/unit_engy)/sphere_vol; // Input in ergs
   m_ej  = pin->GetOrAddReal("SN","M_ej",8.4*1.988e33/unit_mass)/sphere_vol; // Input in solar mass
 
+  std::cout << M_ej
+
   // Enroll user defined history outputs
   AllocateUserHistoryOutput(3);
   EnrollUserHistoryOutput(0,CalculateSNEnergyInjection,"SNEnergyInjection");

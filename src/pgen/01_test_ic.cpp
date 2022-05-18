@@ -1,5 +1,3 @@
-// Problem generator for studying clouds in SN-driven winds
-
 // C++ headers
 #include <algorithm>  // min()
 #include <cmath>      // abs(), pow(), sqrt()
