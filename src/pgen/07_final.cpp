@@ -21,6 +21,7 @@
 #include "../utils/utils.hpp"              // Utilities
 #include "../utils/sn_injection.hpp"       // SNInj
 #include "../cooling/cooling.hpp"          // Cooling
+#include "../scalars/scalars.hpp"          // Passive Scalars
 
 // Code Units (cgs)
 const Real amu       = 1.6605e-24;   // atomic mass unit (g)
@@ -53,7 +54,7 @@ static std::vector<Real> sn_times;
 static int next_sn_idx;
 static Real r_inj,e_sn,m_ej;
 
-
+static Real tracer_injection_time;
 
 // User defined boundary conditions 
 void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
@@ -86,7 +87,18 @@ void CoolingSource(MeshBlock *pmb, const Real dt,
                    const AthenaArray<Real> &bcc);
 void SNSource(MeshBlock *pmb, const Real dt, 
               const AthenaArray<Real> &prim, 
-              AthenaArray<Real> &cons);
+              AthenaArray<Real> &cons,
+              AthenaArray<Real> &cons_scalar);
+void TracerInjection(MeshBlock *pmb, const Real dt, 
+                     const AthenaArray<Real> &prim, 
+                     const AthenaArray<Real> &bcc,
+                     AthenaArray<Real> &cons,
+                     AthenaArray<Real> &cons_scalar);
+void TracerSource(MeshBlock *pmb, const Real dt, 
+                  const AthenaArray<Real> &prim, 
+                  const AthenaArray<Real> &bcc,
+                  AthenaArray<Real> &cons,
+                  AthenaArray<Real> &cons_scalar);
 
 // User defined history functions
 Real CalculateSNEnergyInjection(MeshBlock *pmb, int iout);
@@ -96,6 +108,10 @@ Real CalculateColdGasMass(MeshBlock *pmb, int iout);
 // Misc
 void AssertCondition(bool condition, std::string msg);
 static Real CoolingTimestep(MeshBlock *pmb); // User defined time step
+Real CellTemperature(const int k, const int j, const int i,
+                     MeshBlock *pmb,
+                     const AthenaArray<Real> &cons,
+                     const AthenaArray<Real> &bcc);
 
 //===========================================================================//
 //                             Initializations                               //
@@ -108,6 +124,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   AssertCondition(mesh_bcs[BoundaryFace::outer_x3] == GetBoundaryFlag("user"),
                   "Use user-defined outer boundary condition along x3");
   AssertCondition(mesh_size.nx2 > 1 && mesh_size.nx3 > 1,"Run in 3D");
+  AssertCondition(NSCALARS == 4,"Set number of passive scalars to 4");
 #ifndef FFT
   AssertCondition(false,"Compile with FFT");
 #endif
@@ -140,6 +157,9 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   e_sn  = pin->GetOrAddReal("SN","E_sn",E_def)/sphere_vol; // Input in ergs
   m_ej  = pin->GetOrAddReal("SN","M_ej",M_def)/sphere_vol; // Input in solar mass
 
+  // Set tracer injection time and flag
+  tracer_injection_time = pin->GetReal("problem","tinj");
+
   // Enroll user-defined physical source terms
   EnrollUserExplicitSourceFunction(SourceFunctions);
 
@@ -148,7 +168,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   EnrollUserBoundaryFunction(BoundaryFace::outer_x3, NoInflowOuterX3);
 
   // Enroll timestep so that dt <= min t_cool
-  //EnrollUserTimeStepFunction(CoolingTimestep);
+  EnrollUserTimeStepFunction(CoolingTimestep);
 
   // Enroll user-defined history outputs
   AllocateUserHistoryOutput(3);
@@ -217,8 +237,8 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
   const Real cs2 = pgas0/rho0; // Isothermal sound speed
   const Real H = std::sqrt(cs2)/(vcir/R0); // Scale height = cs/omega
 
-  const Real amp = 0.01;
-  std::int64_t iseed = -1 - gid;
+  // const Real amp = 0.01;
+  // std::int64_t iseed = -1 - gid;
 
 
   for (int k=ks; k<=ke; k++) {
@@ -231,19 +251,24 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
                                  (std::pow(SQR(R0)/(SQR(R0)+SQR(z)),0.5)-1));
 
         // Grid scale random field for initial TI
-        rho *= (1 + amp*(ran2(&iseed)-0.5));
+        // rho *= (1 + amp*(ran2(&iseed)-0.5));
         rho = std::fmax(rho,1e-8);
 
         phydro->u(IDN,k,j,i) = rho;
-        phydro->u(IM1,k,j,i) = rho*amp*(ran2(&iseed)-0.5);
-        phydro->u(IM2,k,j,i) = rho*amp*(ran2(&iseed)-0.5);
-        phydro->u(IM3,k,j,i) = rho*amp*(ran2(&iseed)-0.5);
+        phydro->u(IM1,k,j,i) = 0.0; //rho*amp*(ran2(&iseed)-0.5);
+        phydro->u(IM2,k,j,i) = 0.0; //rho*amp*(ran2(&iseed)-0.5);
+        phydro->u(IM3,k,j,i) = 0.0; //rho*amp*(ran2(&iseed)-0.5);
 
         phydro->u(IEN,k,j,i) =  phydro->u(IDN,k,j,i)*cs2/(peos->GetGamma()-1);
         phydro->u(IEN,k,j,i) += 0.5*(SQR(phydro->u(IM1,k,j,i)) +
                                      SQR(phydro->u(IM2,k,j,i)) +
                                      SQR(phydro->u(IM3,k,j,i)))
                                      /phydro->u(IDN,k,j,i);
+
+        // Initialize passive scalars
+        for (int n=0; n<NSCALARS; ++n) {
+          pscalars->s(n,k,j,i) = 0.0;
+        }
       } 
     }
   }
@@ -298,6 +323,10 @@ void NoInflowOuterX3(MeshBlock *pmb, Coordinates *pco,
         prim(IVX,ku+k,j,i) = prim(IVX,ku,j,i); 
         prim(IVY,ku+k,j,i) = prim(IVY,ku,j,i);
         prim(IVZ,ku+k,j,i) = std::fmax(0.,prim(IVZ,ku,j,i)); 
+
+        for (int n=0; n<NSCALARS; ++n) {
+          r(n,ku+k,j,i) = r(n,ku,j,i);
+        }
       }
     }
   }
@@ -347,6 +376,10 @@ void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
         prim(IVX,kl-k,j,i) = prim(IVX,kl,j,i); 
         prim(IVY,kl-k,j,i) = prim(IVY,kl,j,i);
         prim(IVZ,kl-k,j,i) = std::fmin(0.,prim(IVZ,kl,j,i)); 
+
+        for (int n=0; n<NSCALARS; ++n) {
+          r(n,kl-k,j,i) = r(n,kl,j,i);
+        }
       }
     }
   }
@@ -387,7 +420,8 @@ void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
 void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
                     const AthenaArray<Real> &prim, 
                     const AthenaArray<Real> &prim_scalar,
-                    const AthenaArray<Real> &bcc, AthenaArray<Real> &cons,
+                    const AthenaArray<Real> &bcc, 
+                    AthenaArray<Real> &cons,
                     AthenaArray<Real> &cons_scalar) {
   // Vertical gravity
   GravitySource(pmb,dt,prim,cons);
@@ -397,10 +431,20 @@ void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
 
   // SNe injection
   if (time > sn_times.at(next_sn_idx)) { // Step through list of SN times
-    SNSource(pmb,dt,prim,cons);
+    SNSource(pmb,dt,prim,cons,cons_scalar);
     next_sn_idx++;
   }
-  
+
+  // Tracer injection in COLD and COOL gas phases
+  // ~ this condition is a little bit of a hack to make sure we are called
+  // at the [last] call to SourceFunctions so that scalar concentration = 1
+  if (time > tracer_injection_time && time < tracer_injection_time+dt) {
+    TracerInjection(pmb,dt,prim,bcc,cons,cons_scalar);
+  }
+
+  // Tracer in Hot phase (continuous)
+  TracerSource(pmb,dt,prim,bcc,cons,cons_scalar);
+
   return;
 }
 
@@ -437,28 +481,12 @@ void CoolingSource(MeshBlock *pmb, const Real dt,
                    const AthenaArray<Real> &prim, 
                    AthenaArray<Real> &cons,
                    const AthenaArray<Real> &bcc) {
-  const Real g = pmb->peos->GetGamma();
-
+  Real g = pmb->peos->GetGamma();
   for (int k=pmb->ks; k<=pmb->ke; k++) {
     for (int j=pmb->js; j<=pmb->je; j++) {
       for (int i=pmb->is; i<=pmb->ie; i++) {
-        // Use cons not prime because we do not need intermediate step 
-        // to calculate cooling
-        Real rho  = cons(IDN,k,j,i);
-        Real eint = cons(IEN,k,j,i)
-                    - 0.5 *(cons(IM1,k,j,i)*cons(IM1,k,j,i)
-                          + cons(IM2,k,j,i)*cons(IM2,k,j,i)
-                          + cons(IM3,k,j,i)*cons(IM3,k,j,i))/rho; 
-
-        if (MAGNETIC_FIELDS_ENABLED) {
-          eint -= 0.5 *(bcc(IB1,k,j,i) * bcc(IB1,k,j,i)
-                      + bcc(IB2,k,j,i) * bcc(IB2,k,j,i)
-                      + bcc(IB3,k,j,i) * bcc(IB3,k,j,i));
-        }       
-
-        // T = P/rho
-        Real temp = eint * (g-1.0)/rho;
-        
+        Real rho = cons(IDN,k,j,i);
+        Real temp = CellTemperature(k,j,i,pmb,cons,bcc);
         Real temp_new = temp;
 
         // Calculate new temperature using the Townsend Algorithm
@@ -477,19 +505,7 @@ void CoolingSource(MeshBlock *pmb, const Real dt,
             for (int nj=std::max(j-1,pmb->js); nj<=std::min(j+1,pmb->je); ++nj) {
               for (int ni=std::max(i-1,pmb->is); ni<=std::min(i+1,pmb->ie); ++ni) {
                 if ((nk != k) || (nj != j) || (ni != i)) {
-                  auto nrho = cons(IDN,nk,nj,ni);
-                  auto neint = cons(IEN,nk,nj,ni)
-                              - 0.5 *(cons(IM1,nk,nj,ni)*cons(IM1,nk,nj,ni)
-                                    + cons(IM2,nk,nj,ni)*cons(IM2,nk,nj,ni)
-                                    + cons(IM3,nk,nj,ni)*cons(IM3,nk,nj,ni))/nrho;
-                  if (MAGNETIC_FIELDS_ENABLED) {
-                    neint -= 0.5 *(bcc(IB1,nk,nj,ni) * bcc(IB1,nk,nj,ni)
-                                 + bcc(IB2,nk,nj,ni) * bcc(IB2,nk,nj,ni)
-                                 + bcc(IB3,nk,nj,ni) * bcc(IB3,nk,nj,ni));
-                  }
-
-                  // T = P/rho
-                  auto ntemp = neint * (g-1.0)/nrho;
+                  Real ntemp = CellTemperature(nk,nj,ni,pmb,cons,bcc);
 
                   n_nb += 1;
                   sum_temp += ntemp;
@@ -526,7 +542,8 @@ void CoolingSource(MeshBlock *pmb, const Real dt,
 // SN source term
 void SNSource(MeshBlock *pmb, const Real dt, 
               const AthenaArray<Real> &prim, 
-              AthenaArray<Real> &cons) {
+              AthenaArray<Real> &cons,
+              AthenaArray<Real> &cons_scalar) {
   for (int k=pmb->ks; k<=pmb->ke; k++) {
     Real z = pmb->pcoord->x3v(k);
     for (int j=pmb->js; j<=pmb->je; j++) {
@@ -543,7 +560,60 @@ void SNSource(MeshBlock *pmb, const Real dt,
           // Store the changes in a user defined output variable
           pmb->user_out_var(0,k,j,i) += e_sn;
           pmb->user_out_var(1,k,j,i) += m_ej;
+
+          // Add passive scalar to track SN gas
+          cons_scalar(3,k,j,i) += m_ej;
         }        
+      }
+    }
+  }
+
+  return;
+}
+
+// Tracer injection term (Only called once)
+void TracerInjection(MeshBlock *pmb, const Real dt, 
+                     const AthenaArray<Real> &prim, 
+                     const AthenaArray<Real> &bcc,
+                     AthenaArray<Real> &cons,
+                     AthenaArray<Real> &cons_scalar) {
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    for (int j=pmb->js; j<=pmb->je; j++) {
+      for (int i=pmb->is; i<=pmb->ie; i++) {
+        Real rho = cons(IDN,k,j,i);
+        Real temp_cgs = CellTemperature(k,j,i,pmb,cons,bcc)*unit_temp;
+
+        // Inject tracers
+        if (temp_cgs < 5e3) { // Cold Phase
+          cons_scalar(0,k,j,i) = rho;
+        } else if (temp_cgs < 2e4) { // Cool Phase
+          cons_scalar(1,k,j,i) = rho;
+        }        
+        
+      }
+    }
+  }
+
+  return;
+}
+
+// Tracer source term
+void TracerSource(MeshBlock *pmb, const Real dt, 
+                  const AthenaArray<Real> &prim, 
+                  const AthenaArray<Real> &bcc,
+                  AthenaArray<Real> &cons,
+                  AthenaArray<Real> &cons_scalar) {
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    for (int j=pmb->js; j<=pmb->je; j++) {
+      for (int i=pmb->is; i<=pmb->ie; i++) {
+        Real rho = cons(IDN,k,j,i);
+        Real temp_cgs = CellTemperature(k,j,i,pmb,cons,bcc)*unit_temp;
+
+        // Inject tracers
+        if (temp_cgs > 2e4) { // Hot Phase
+          cons_scalar(2,k,j,i) = rho;
+        }
+                
       }
     }
   }
@@ -655,4 +725,27 @@ Real CoolingTimestep(MeshBlock *pmb) {
   }
 
   return 0.5*min_dt;
+}
+
+// Compute the temperature of a cell
+Real CellTemperature(const int k, const int j, const int i,
+                     MeshBlock *pmb,
+                     const AthenaArray<Real> &cons,
+                     const AthenaArray<Real> &bcc) {
+  // Use cons not prime because we do not need intermediate step 
+  // to calculate cooling
+  Real rho  = cons(IDN,k,j,i);
+  Real eint = cons(IEN,k,j,i)
+              - 0.5 *(cons(IM1,k,j,i)*cons(IM1,k,j,i)
+                    + cons(IM2,k,j,i)*cons(IM2,k,j,i)
+                    + cons(IM3,k,j,i)*cons(IM3,k,j,i))/rho; 
+
+  if (MAGNETIC_FIELDS_ENABLED) {
+    eint -= 0.5 *(bcc(IB1,k,j,i) * bcc(IB1,k,j,i)
+                + bcc(IB2,k,j,i) * bcc(IB2,k,j,i)
+                + bcc(IB3,k,j,i) * bcc(IB3,k,j,i));
+  }       
+
+  // T = P/rho
+  return eint * (pmb->peos->GetGamma()-1.0)/rho;
 }
