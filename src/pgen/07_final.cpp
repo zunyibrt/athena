@@ -27,7 +27,7 @@
 const Real amu       = 1.6605e-24;   // atomic mass unit (g)
 const Real kb        = 1.380648e-16; // boltzmann constant (erg/K)
 const Real mu        = 0.6173;       // mean molecular weight (Solar)
-                                         // X = 0.7; Z = 0.02
+                                     // X = 0.7; Z = 0.02
 
 const Real unit_len  = 3.086e20;     // 100 pc
 const Real unit_temp = 1.0e4;        // 10^4 K
@@ -51,10 +51,11 @@ static Cooling cooler;
 
 static SNInj injector;
 static std::vector<Real> sn_times;
-static int next_sn_idx;
+static std::vector<Real>::iterator next_sn_idx;
 static Real r_inj,e_sn,m_ej;
 
 static Real tracer_injection_time;
+static bool tracer_injection_flag;
 
 // User defined boundary conditions 
 void NoInflowInnerX3(MeshBlock *pmb, Coordinates *pco,
@@ -104,6 +105,14 @@ void TracerSource(MeshBlock *pmb, const Real dt,
 Real CalculateSNEnergyInjection(MeshBlock *pmb, int iout);
 Real CalculateSNMassInjection(MeshBlock *pmb, int iout);
 Real CalculateColdGasMass(MeshBlock *pmb, int iout);
+Real CalculateCoolGasMass(MeshBlock *pmb, int iout);
+Real CalculateWarmGasMass(MeshBlock *pmb, int iout);
+Real CalculateHotGasMass(MeshBlock *pmb, int iout);
+Real CalculateTopMassFlux(MeshBlock *pmb, int iout);
+Real CalculateTopEnergyFlux(MeshBlock *pmb, int iout);
+Real CalculateBottomMassFlux(MeshBlock *pmb, int iout);
+Real CalculateBottomEnergyFlux(MeshBlock *pmb, int iout);
+Real CalculateTotalCooling(MeshBlock *pmb, int iout);
 
 // Misc
 void AssertCondition(bool condition, std::string msg);
@@ -141,12 +150,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   turb_flag = pin->GetInteger("problem","turb_flag");
 
   // Generate SN times
-  next_sn_idx = 0;
   const Real cluster_mass = pin->GetOrAddReal("SN","M_cluster",1e4);
   sn_times = injector.GetSNTimes(cluster_mass,
                                  pin->GetReal("SN","tstart"), 
                                  pin->GetReal("time","tlim"),
                                  unit_time);
+  next_sn_idx = std::lower_bound(sn_times.begin(), sn_times.end(), time);
 
   // Compute energy and mass injection densities
   r_inj = pin->GetReal("SN","r_inj"); // Input in code unis
@@ -159,6 +168,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 
   // Set tracer injection time and flag
   tracer_injection_time = pin->GetReal("problem","tinj");
+  tracer_injection_flag = (time < tracer_injection_time);
 
   // Enroll user-defined physical source terms
   EnrollUserExplicitSourceFunction(SourceFunctions);
@@ -167,14 +177,23 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   EnrollUserBoundaryFunction(BoundaryFace::inner_x3, NoInflowInnerX3);
   EnrollUserBoundaryFunction(BoundaryFace::outer_x3, NoInflowOuterX3);
 
-  // Enroll timestep so that dt <= min t_cool
+  // Enroll timestep so that dt <= min(t_cool)
   EnrollUserTimeStepFunction(CoolingTimestep);
 
   // Enroll user-defined history outputs
-  AllocateUserHistoryOutput(3);
+  AllocateUserHistoryOutput(11);
   EnrollUserHistoryOutput(0,CalculateSNEnergyInjection,"SNEnergyInjection");
   EnrollUserHistoryOutput(1,CalculateSNMassInjection,"SNMassInjection");
   EnrollUserHistoryOutput(2,CalculateColdGasMass,"CalculateColdGasMass");
+  EnrollUserHistoryOutput(3,CalculateCoolGasMass,"CalculateCoolGasMass");
+  EnrollUserHistoryOutput(4,CalculateWarmGasMass,"CalculateWarmGasMass");
+  EnrollUserHistoryOutput(5,CalculateHotGasMass,"CalculateHotGasMass");
+  EnrollUserHistoryOutput(6,CalculateTopMassFlux,"CalculateTopMassFlux");
+  EnrollUserHistoryOutput(7,CalculateTopEnergyFlux,"CalculateTopEnergyFlux");
+  EnrollUserHistoryOutput(8,CalculateBottomMassFlux,"CalculateBottomMassFlux");
+  EnrollUserHistoryOutput(9,CalculateBottomEnergyFlux,"CalculateBottomEnergyFlux");
+  EnrollUserHistoryOutput(10,CalculateTotalCooling,"CalculateTotalCooling");
+
 
   // Output initialization information
   if (Globals::my_rank == 0) {
@@ -228,7 +247,10 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
 }
 
 void MeshBlock::InitUserMeshBlockData(ParameterInput *pin) {
-  AllocateUserOutputVariables(4);
+  AllocateUserOutputVariables(3);
+  // 1) SN Energy Injected 
+  // 2) SN Mass Injected
+  // 3) Total Cooling In Cell
 
   return;
 }
@@ -236,10 +258,6 @@ void MeshBlock::InitUserMeshBlockData(ParameterInput *pin) {
 void MeshBlock::ProblemGenerator(ParameterInput *pin) {
   const Real cs2 = pgas0/rho0; // Isothermal sound speed
   const Real H = std::sqrt(cs2)/(vcir/R0); // Scale height = cs/omega
-
-  // const Real amp = 0.01;
-  // std::int64_t iseed = -1 - gid;
-
 
   for (int k=ks; k<=ke; k++) {
     for (int j=js; j<=je; j++) {
@@ -249,15 +267,12 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
         // Hydrostatic solution
         Real rho = rho0*std::exp(SQR(R0/H)*
                                  (std::pow(SQR(R0)/(SQR(R0)+SQR(z)),0.5)-1));
-
-        // Grid scale random field for initial TI
-        // rho *= (1 + amp*(ran2(&iseed)-0.5));
         rho = std::fmax(rho,1e-8);
 
         phydro->u(IDN,k,j,i) = rho;
-        phydro->u(IM1,k,j,i) = 0.0; //rho*amp*(ran2(&iseed)-0.5);
-        phydro->u(IM2,k,j,i) = 0.0; //rho*amp*(ran2(&iseed)-0.5);
-        phydro->u(IM3,k,j,i) = 0.0; //rho*amp*(ran2(&iseed)-0.5);
+        phydro->u(IM1,k,j,i) = 0.0;
+        phydro->u(IM2,k,j,i) = 0.0;
+        phydro->u(IM3,k,j,i) = 0.0;
 
         phydro->u(IEN,k,j,i) =  phydro->u(IDN,k,j,i)*cs2/(peos->GetGamma()-1);
         phydro->u(IEN,k,j,i) += 0.5*(SQR(phydro->u(IM1,k,j,i)) +
@@ -274,29 +289,29 @@ void MeshBlock::ProblemGenerator(ParameterInput *pin) {
   }
 
 
-  // initialize uniform interface B
+  // Initialize uniform interface B
   if (MAGNETIC_FIELDS_ENABLED) {
     Real beta = pin->GetReal("problem","beta");
-    Real b0 = std::sqrt(2*1e-8*cs2/beta);
-    for (int k=ks; k<=ke; k++) {
-    for (int j=js; j<=je; j++) {
-    for (int i=is; i<=ie+1; i++) {
+
+    for (int k=ks; k<=ke;   k++) {
+      for (int j=js; j<=je;   j++) {
+        for (int i=is; i<=ie+1; i++) {
       int iref = std::min(i,ie);
       pfield->b.x1f(k,j,i) = std::sqrt(2*phydro->u(IDN,k,j,iref)*cs2/beta);
     }}}
-    for (int k=ks; k<=ke; k++) {
-    for (int j=js; j<=je+1; j++) {
-    for (int i=is; i<=ie; i++) {
+    for (int k=ks; k<=ke;   k++) {
+      for (int j=js; j<=je+1; j++) {
+        for (int i=is; i<=ie;   i++) {
       pfield->b.x2f(k,j,i) = 0.0;
     }}}
     for (int k=ks; k<=ke+1; k++) {
-    for (int j=js; j<=je; j++) {
-    for (int i=is; i<=ie; i++) {
+      for (int j=js; j<=je;   j++) {
+        for (int i=is; i<=ie;   i++) {
       pfield->b.x3f(k,j,i) = 0.0;
     }}}
     for (int k=ks; k<=ke; k++) {
-    for (int j=js; j<=je; j++) {
-    for (int i=is; i<=ie; i++) {
+      for (int j=js; j<=je; j++) {
+        for (int i=is; i<=ie; i++) {
       phydro->u(IEN,k,j,i) += 0.5*SQR(pfield->b.x1f(k,j,i));
     }}}
   }
@@ -430,15 +445,13 @@ void SourceFunctions(MeshBlock *pmb, const Real time, const Real dt,
   CoolingSource(pmb,dt,prim,cons,bcc);
 
   // SNe injection
-  if (time > sn_times.at(next_sn_idx)) { // Step through list of SN times
+  if (time > *next_sn_idx) { // Step through list of SN times
     SNSource(pmb,dt,prim,cons,cons_scalar);
     next_sn_idx++;
   }
 
   // Tracer injection in COLD and COOL gas phases
-  // ~ this condition is a little bit of a hack to make sure we are called
-  // at the [last] call to SourceFunctions so that scalar concentration = 1
-  if (time > tracer_injection_time && time < tracer_injection_time+dt) {
+  if (pmb->pmy_mesh->time > tracer_injection_time && tracer_injection_flag) {
     TracerInjection(pmb,dt,prim,bcc,cons,cons_scalar);
   }
 
@@ -514,24 +527,20 @@ void CoolingSource(MeshBlock *pmb, const Real dt,
 
           temp_new = sum_temp/n_nb;
 
-          std::cout << " Temperature Floor Hit at (" << i << "," << j << "," << k 
-                    << ") because T before cooling = " << temp
-                    << ". Averaging Neigbours... T is now " << temp_new 
-                    // << "  Density is "  << rho
-                    // << " vx is "  << cons(IM1,k,j,i)/rho
-                    // << " vy is "  << cons(IM3,k,j,i)/rho
-                    // << " vz is "  << cons(IM3,k,j,i)/rho
-                    // << " x is "  << pmb->pcoord->x1v(i)
-                    // << " y is "  << pmb->pcoord->x2v(j)
-                    // << " z is "  << pmb->pcoord->x3v(k) 
-                    << std::endl;
+          // std::cout << " Temperature Floor Hit at (" 
+          //           << i << "," << j << "," << k 
+          //           << ") because T before cooling = " << temp
+          //           << ". Averaging Neigbours... T is now " << temp_new 
+          //           << std::endl;
         } 
 
+        Real dE = (temp_new - temp) * (rho/(g-1.0));
+
         // Update energy based on change in temperature
-        cons(IEN,k,j,i) += (temp_new - temp) * (rho/(g-1.0));
+        cons(IEN,k,j,i) += dE;
 
         // Store the change in energy/time in a user defined output variable
-        pmb->user_out_var(2,k,j,i) = (temp_new - temp) * (rho/(g-1.0)) / dt;
+        pmb->user_out_var(2,k,j,i) += dE;
       }
     }
   }
@@ -557,12 +566,12 @@ void SNSource(MeshBlock *pmb, const Real dt,
           cons(IEN,k,j,i) += e_sn;
           cons(IDN,k,j,i) += m_ej;
 
-          // Store the changes in a user defined output variable
-          pmb->user_out_var(0,k,j,i) += e_sn;
-          pmb->user_out_var(1,k,j,i) += m_ej;
-
           // Add passive scalar to track SN gas
           cons_scalar(3,k,j,i) += m_ej;
+
+          // Track the changes in a user defined output variable
+          pmb->user_out_var(0,k,j,i) += e_sn;
+          pmb->user_out_var(1,k,j,i) += m_ej;
         }        
       }
     }
@@ -589,7 +598,6 @@ void TracerInjection(MeshBlock *pmb, const Real dt,
         } else if (temp_cgs < 2e4) { // Cool Phase
           cons_scalar(1,k,j,i) = rho;
         }        
-        
       }
     }
   }
@@ -610,10 +618,9 @@ void TracerSource(MeshBlock *pmb, const Real dt,
         Real temp_cgs = CellTemperature(k,j,i,pmb,cons,bcc)*unit_temp;
 
         // Inject tracers
-        if (temp_cgs > 2e4) { // Hot Phase
+        if (temp_cgs > 5e5) { // Hot Phase
           cons_scalar(2,k,j,i) = rho;
-        }
-                
+        } 
       }
     }
   }
@@ -622,22 +629,17 @@ void TracerSource(MeshBlock *pmb, const Real dt,
 }
 
 //===========================================================================//
-//                                Analysis                                   //
+//                               User Work                                   //
 //===========================================================================//
-void MeshBlock::UserWorkBeforeOutput(ParameterInput *pin) {
-  for (int k=ks; k<=ke; k++) {
-    for (int j=js; j<=je; j++) {
-      for (int i=is; i<=ie; i++) {
-        Real T = unit_temp*phydro->w(IPR,k,j,i)/phydro->w(IDN,k,j,i);
-        Real rho = unit_rho*phydro->w(IDN,k,j,i);
-        Real tcool = cooler.single_point_cooling_time(T, rho)/unit_time;
-
-        user_out_var(3,k,j,i) = tcool;
-      }
-    }
+void Mesh::UserWorkInLoop() {
+  if (time > tracer_injection_time && tracer_injection_flag) {
+    tracer_injection_flag = false;
   }
 }
 
+//===========================================================================//
+//                                Analysis                                   //
+//===========================================================================//
 // History function for the total SN energy injected
 Real CalculateSNEnergyInjection(MeshBlock *pmb, int iout) {
   AthenaArray<Real> vol(pmb->ncells1);
@@ -670,7 +672,7 @@ Real CalculateSNMassInjection(MeshBlock *pmb, int iout) {
   return sum;
 }
 
-// History function for the total SN mass injected
+// History function for the total cold gas mass
 Real CalculateColdGasMass(MeshBlock *pmb, int iout) {
   AthenaArray<Real> vol(pmb->ncells1);
   Real sum = 0.0;
@@ -679,9 +681,158 @@ Real CalculateColdGasMass(MeshBlock *pmb, int iout) {
       pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
       for (int i=pmb->is; i<=pmb->ie; i++) {
        Real T = unit_temp*pmb->phydro->w(IPR,k,j,i)/pmb->phydro->w(IDN,k,j,i);
-       if (T < 2e4) {
+       if (T < 5e3) {
          sum += pmb->phydro->w(IDN,k,j,i)*vol(i);
        }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the total cool gas mass
+Real CalculateCoolGasMass(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    for (int j=pmb->js; j<=pmb->je; j++) {
+      pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+      for (int i=pmb->is; i<=pmb->ie; i++) {
+       Real T = unit_temp*pmb->phydro->w(IPR,k,j,i)/pmb->phydro->w(IDN,k,j,i);
+       if (T > 5e3 && T < 2e4) {
+         sum += pmb->phydro->w(IDN,k,j,i)*vol(i);
+       }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the total warm gas mass
+Real CalculateWarmGasMass(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    for (int j=pmb->js; j<=pmb->je; j++) {
+      pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+      for (int i=pmb->is; i<=pmb->ie; i++) {
+       Real T = unit_temp*pmb->phydro->w(IPR,k,j,i)/pmb->phydro->w(IDN,k,j,i);
+       if (T > 2e4 && T < 5e5) {
+         sum += pmb->phydro->w(IDN,k,j,i)*vol(i);
+       }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the total hot gas mass
+Real CalculateHotGasMass(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    for (int j=pmb->js; j<=pmb->je; j++) {
+      pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+      for (int i=pmb->is; i<=pmb->ie; i++) {
+       Real T = unit_temp*pmb->phydro->w(IPR,k,j,i)/pmb->phydro->w(IDN,k,j,i);
+       if (T > 5e5) {
+         sum += pmb->phydro->w(IDN,k,j,i)*vol(i);
+       }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the mass flux through top boundary
+Real CalculateTopMassFlux(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    Real z = pmb->pcoord->x3f(k+1); // Height of top face
+    if (std::abs(z - 15.36) < 0.00001 ) { // Equality
+      for (int j=pmb->js; j<=pmb->je; j++) {
+        pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+        for (int i=pmb->is; i<=pmb->ie; i++) {
+        sum += pmb->phydro->w(IDN,k,j,i)*pmb->phydro->w(IVZ,k,j,i)*vol(i);
+        }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the energy flux through top boundary
+Real CalculateTopEnergyFlux(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    Real z = pmb->pcoord->x3f(k); // Height of bottom face
+    if (std::abs(z + 5.12) < 0.00001 ) { // Equality
+      for (int j=pmb->js; j<=pmb->je; j++) {
+        pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+        for (int i=pmb->is; i<=pmb->ie; i++) {
+        sum += pmb->phydro->u(IEN,k,j,i)*pmb->phydro->w(IVZ,k,j,i)*vol(i);
+        }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the mass flux through bottom boundary
+Real CalculateBottomMassFlux(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    Real z = pmb->pcoord->x3f(k); // Height of bottom face
+    if (std::abs(z + 5.12) < 0.00001 ) { // Equality
+      for (int j=pmb->js; j<=pmb->je; j++) {
+        pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+        for (int i=pmb->is; i<=pmb->ie; i++) {
+        sum += pmb->phydro->w(IDN,k,j,i)*pmb->phydro->w(IVZ,k,j,i)*vol(i);
+        }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the energy flux through bottom boundary
+Real CalculateBottomEnergyFlux(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    Real z = pmb->pcoord->x3f(k+1); // Height of top face
+    if (std::abs(z - 15.36) < 0.00001 ) { // Equality
+      for (int j=pmb->js; j<=pmb->je; j++) {
+        pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+        for (int i=pmb->is; i<=pmb->ie; i++) {
+        sum += pmb->phydro->u(IEN,k,j,i)*pmb->phydro->w(IVZ,k,j,i)*vol(i);
+        }
+      }
+    }
+  }
+
+  return sum;
+}
+
+// History function for the total cooling
+Real CalculateTotalCooling(MeshBlock *pmb, int iout) {
+  AthenaArray<Real> vol(pmb->ncells1);
+  Real sum = 0.0;
+  for (int k=pmb->ks; k<=pmb->ke; k++) {
+    for (int j=pmb->js; j<=pmb->je; j++) {
+      pmb->pcoord->CellVolume(k,j,pmb->is,pmb->ie,vol);
+      for (int i=pmb->is; i<=pmb->ie; i++) {
+       sum += pmb->user_out_var(2,k,j,i)*vol(i);
       }
     }
   }
@@ -715,16 +866,16 @@ Real CoolingTimestep(MeshBlock *pmb) {
           min_dt = std::fmin(min_dt, tcool);
         } else {
           std::cout << "Bad Cell, Density: " << pmb->phydro->w(IDN,k,j,i) 
-                          << "  Pressure : " << pmb->phydro->w(IPR,k,j,i) 
-                     << "   Cooling Time : " << tcool 
-                                  << "  z: " << pmb->pcoord->x3v(k) 
+                    <<       "  Pressure : " << pmb->phydro->w(IPR,k,j,i) 
+                    <<  "   Cooling Time : " << tcool 
+                    <<               "  z: " << pmb->pcoord->x3v(k) 
                                              << std::endl;
         }
       }
     }
   }
 
-  return 0.5*min_dt;
+  return min_dt;
 }
 
 // Compute the temperature of a cell
@@ -732,8 +883,6 @@ Real CellTemperature(const int k, const int j, const int i,
                      MeshBlock *pmb,
                      const AthenaArray<Real> &cons,
                      const AthenaArray<Real> &bcc) {
-  // Use cons not prime because we do not need intermediate step 
-  // to calculate cooling
   Real rho  = cons(IDN,k,j,i);
   Real eint = cons(IEN,k,j,i)
               - 0.5 *(cons(IM1,k,j,i)*cons(IM1,k,j,i)
