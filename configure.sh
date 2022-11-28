@@ -7,8 +7,8 @@ module load intel-oneapi-compilers intel-oneapi-mkl intel-mpi/2017.4.196 fftw/3.
 export MPICH_CXX=icpc
 
 # Run configuration script and save to logfile
-#./configure.py --prob=07_final --cxx=icpc -b --flux hlld --nscalars=4 -fft -mpi -hdf5 -h5double > configure.log
-./configure.py --prob=07_final -b --flux=hlld --nscalars=4 -fft -mpi -hdf5 -h5double > configure.log # Fast compile for testing
+./configure.py --prob=07_final --cxx=icpc -b --flux hlld --nscalars=5 -fft -mpi -hdf5 -h5double > configure.log
+#./configure.py --prob=07_final -b --flux=hlld --nscalars=5 -fft -mpi -hdf5 -h5double > configure.log # Fast compile for testing
 
 # Print configuration to stdout
 cat configure.log

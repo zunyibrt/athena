@@ -133,7 +133,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
   AssertCondition(mesh_bcs[BoundaryFace::outer_x3] == GetBoundaryFlag("user"),
                   "Use user-defined outer boundary condition along x3");
   AssertCondition(mesh_size.nx2 > 1 && mesh_size.nx3 > 1,"Run in 3D");
-  AssertCondition(NSCALARS == 4,"Set number of passive scalars to 4");
+  AssertCondition(NSCALARS == 5,"Set number of passive scalars to 5");
 #ifndef FFT
   AssertCondition(false,"Compile with FFT");
 #endif
@@ -211,10 +211,13 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
     std::cout << "Unit Time           : " << unit_time*3.171e-14 
                                           << " Myr"   << std::endl;
     std::cout << std::endl;
-
     std::cout << "==============================================" << std::endl;
     std::cout << "Initialization                                " << std::endl;
     std::cout << "==============================================" << std::endl;
+    std::cout << "Start Time is        : " << time  
+                                           << " Code Units" << std::endl;  
+    std::cout << "Plasma Beta          : " << pin->GetReal("problem","beta")
+                                           << std::endl;
     std::cout << "Midplane Density     : " << rho0  
                                            << " cm^-3" << std::endl;  
     std::cout << "Midplane Temperature : " << unit_temp*pgas0/rho0 
@@ -240,7 +243,12 @@ void Mesh::InitUserMeshData(ParameterInput *pin) {
                                        << " Solar Masses"      << std::endl;  
     std::cout << "Injection Radius : " << r_inj*unit_len*3.241e-19
                                        << " pc"                << std::endl;
+    std::cout << "Passive Dye at   : " << tracer_injection_time      
+                                       << " Code Units"        << std::endl;
     std::cout << std::endl;
+    std::cout << "==============================================" << std::endl;
+    std::cout << "Complete                                      " << std::endl;
+    std::cout << "==============================================" << std::endl;
   }
 
   return;
@@ -567,7 +575,7 @@ void SNSource(MeshBlock *pmb, const Real dt,
           cons(IDN,k,j,i) += m_ej;
 
           // Add passive scalar to track SN gas
-          cons_scalar(3,k,j,i) += m_ej;
+          cons_scalar(4,k,j,i) += m_ej;
 
           // Track the changes in a user defined output variable
           pmb->user_out_var(0,k,j,i) += e_sn;
@@ -620,6 +628,11 @@ void TracerSource(MeshBlock *pmb, const Real dt,
         // Inject tracers
         if (temp_cgs > 5e5) { // Hot Phase
           cons_scalar(2,k,j,i) = rho;
+        } 
+
+        if (temp_cgs < 5e3 && pmb->pmy_mesh->time > tracer_injection_time) { 
+          // Cold Phase
+          cons_scalar(3,k,j,i) = rho;
         } 
       }
     }

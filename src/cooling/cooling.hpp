@@ -121,7 +121,8 @@ Cooling::~Cooling() {
 Real Cooling::townsend_cooling(const Real T, const Real rho, const Real dt) {
     // Ensure temperature is within bounds
     if (T <= Tfloor_) return Tfloor_;
-    if (T >= Tceil_)  return Tceil_;
+    // if (T >= Tceil_)  return Tceil_;
+    if (T >= 5e8) return 5e8;
 
     // Make a copy of temperatures that can be edited
     temps = temperature_table;
